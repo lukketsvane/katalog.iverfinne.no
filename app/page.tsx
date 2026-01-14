@@ -58,6 +58,30 @@ const IGNORED_CATEGORY = 'models';
 const ZOOM_MIN_DISTANCE = 1;
 const ZOOM_MAX_DISTANCE = 10;
 
+// Safely parse localStorage catalog data with validation
+function parseLocalStorageCatalog(): CatalogItem[] {
+  try {
+    const raw = localStorage.getItem('katalog-config');
+    if (!raw) return [];
+    
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.items)) {
+      return [];
+    }
+    
+    // Validate each item has required fields
+    return parsed.items.filter((item: unknown): item is CatalogItem => {
+      if (!item || typeof item !== 'object') return false;
+      const obj = item as Record<string, unknown>;
+      return typeof obj.url === 'string' && 
+             typeof obj.name === 'string' && 
+             typeof obj.category === 'string';
+    });
+  } catch {
+    return [];
+  }
+}
+
 function shouldIgnoreItem(item: CatalogItem): boolean {
   return (
     item.category.toLowerCase() === IGNORED_CATEGORY &&
@@ -79,9 +103,8 @@ export default function Katalog() {
   useEffect(() => {
     const fetchItems = async () => {
       try {
-        // Read from localStorage first
-        const localCatalog = JSON.parse(localStorage.getItem('katalog-config') || '{"items":[]}');
-        const localItems: CatalogItem[] = localCatalog.items || [];
+        // Read from localStorage first (with safe parsing and validation)
+        const localItems = parseLocalStorageCatalog();
 
         // Fetch from API
         const response = await fetch('/api/items');
@@ -100,14 +123,9 @@ export default function Katalog() {
       } catch (err) {
         console.error('Failed to fetch items:', err);
         // Fallback to localStorage only if API fails
-        try {
-          const localCatalog = JSON.parse(localStorage.getItem('katalog-config') || '{"items":[]}');
-          setItems(localCatalog.items || []);
-          setFilteredItems(localCatalog.items || []);
-        } catch {
-          setItems([]);
-          setFilteredItems([]);
-        }
+        const localItems = parseLocalStorageCatalog();
+        setItems(localItems);
+        setFilteredItems(localItems);
       } finally {
         setLoading(false);
       }
@@ -131,7 +149,7 @@ export default function Katalog() {
       result = result.filter(item => 
         item.name.toLowerCase().includes(query) ||
         item.category.toLowerCase().includes(query) ||
-        (item.tags && item.tags.some(tag => tag.toLowerCase().includes(query))) ||
+        (item.tags && item.tags.some(tag => tag.includes(query))) ||
         (item.metadata?.description && item.metadata.description.toLowerCase().includes(query))
       );
     }
