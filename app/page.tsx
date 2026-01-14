@@ -30,6 +30,8 @@ interface Translations {
   aboutP2: string;
   aboutP3: string;
   curatedDescription: string;
+  categories: Record<string, string>;
+  items: Record<string, string>;
 }
 
 const translations: Record<Language, Translations> = {
@@ -49,23 +51,49 @@ const translations: Record<Language, Translations> = {
     aboutP2: 'I would like to keep things as they are, but the digital landscape is ever-changing. By scanning and archiving these items, we push the limits of inertia.',
     aboutP3: 'Longing for stability in my life, I felt the urge to really lock myself into my new place. I decided then and there to digitize everything, getting up close and personal with my belongings and analyzing all of them in detail.',
     curatedDescription: 'A curated 3D object from the collection.',
+    categories: {
+      'all': 'All',
+      'electronics': 'Electronics',
+      'kitchen': 'Kitchen',
+      'personal': 'Personal',
+      'toys': 'Toys',
+    },
+    items: {
+      'mechanical keyboard': 'Mechanical Keyboard',
+      'battery energy drink': 'Battery Energy Drink',
+      'camel cigarette pack': 'Camel Cigarette Pack',
+      'bobblehead figurine': 'Bobblehead Figurine',
+    },
   },
   NO: {
     about: 'Om',
-    loadingAssets: 'Laster inn',
-    noObjectsFound: 'Ingen objekter funnet',
-    resetFilters: 'Tilbakestill filter',
+    loadingAssets: 'Lastar',
+    noObjectsFound: 'Fann ingen objekt',
+    resetFilters: 'Nullstill',
     all: 'Alle',
     added: 'Lagt til',
     type: 'Type',
     glbAsset: 'GLB-fil',
-    hostedAt: 'Hostet på',
-    loading: 'Laster...',
+    hostedAt: 'Ligg på',
+    loading: 'Lastar...',
     aboutTitle: 'Katalog',
-    aboutP1: ' er en digital samler som ordner, kategoriserer og stiller ut ting. Denne samlingen representerer et søk etter estetisk følelse i sammensetningen av hverdagslige gjenstander.',
-    aboutP2: 'Jeg ønsker å bevare tingene slik de er, men det digitale landskapet er i stadig endring. Ved å skanne og arkivere disse gjenstandene utfordrer vi grensene for treghet.',
-    aboutP3: 'Med et ønske om stabilitet i livet mitt, følte jeg trangen til å virkelig forankre meg i mitt nye hjem. Jeg bestemte meg der og da for å digitalisere alt, bli godt kjent med eiendelene mine og analysere dem i detalj.',
-    curatedDescription: 'Et kuratert 3D-objekt fra samlingen.',
+    aboutP1: ' er ein digital samlar som ordnar, kategoriserar og stiller ut ting. Samlinga representerer eit søk etter estetisk kjensle i samanstillinga av kvardagslege gjenstandar.',
+    aboutP2: 'Eg vil gjerne halda tinga slik dei er, men det digitale landskapet er i stadig endring. Ved å skanna og arkivera desse gjenstandane utfordrar me grensene for tregleik.',
+    aboutP3: 'Med eit ynskje om stabilitet i livet mitt, kjende eg trong til å verkeleg forankra meg i den nye heimen min. Eg bestemte meg der og då for å digitalisera alt, verta godt kjend med eigedelane mine og analysera dei i detalj.',
+    curatedDescription: 'Eit kuratert 3D-objekt frå samlinga.',
+    categories: {
+      'all': 'Alle',
+      'electronics': 'Elektronikk',
+      'kitchen': 'Kjøken',
+      'personal': 'Personleg',
+      'toys': 'Leiketøy',
+    },
+    items: {
+      'mechanical keyboard': 'Mekanisk tastatur',
+      'battery energy drink': 'Battery energidrikk',
+      'camel cigarette pack': 'Camel sigaretteske',
+      'bobblehead figurine': 'Vippefigur',
+    },
   },
 };
 
@@ -510,18 +538,32 @@ const ProgressiveImage: React.FC<{
   );
 };
 
+// Helper to translate item names
+const translateItemName = (name: string, t: Translations): string => {
+  const key = name.toLowerCase();
+  return t.items[key] || name;
+};
+
+// Helper to translate category names
+const translateCategory = (category: string, t: Translations): string => {
+  const key = category.split('/').pop() || category;
+  return t.categories[key] || key;
+};
+
 interface GridItemProps {
   item: CatalogItem;
   onClick: (item: CatalogItem) => void;
   onThumbnailGenerated?: (id: number, thumbnails: MultiResThumbnails) => void;
+  t: Translations;
 }
 
-const GridItem: React.FC<GridItemProps> = ({ item, onClick, onThumbnailGenerated }) => {
+const GridItem: React.FC<GridItemProps> = ({ item, onClick, onThumbnailGenerated, t }) => {
   const [isHovered, setIsHovered] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
 
   const hasThumbnail = item.thumbnails || item.thumbnail;
+  const displayName = translateItemName(item.name, t);
 
   useEffect(() => {
     let timeout: ReturnType<typeof setTimeout>;
@@ -825,7 +867,7 @@ export default function Page() {
                           : 'text-gray-400 opacity-60 hover:opacity-100 hover:text-gray-800'}
                   `}
                 >
-                  {cat === 'all' ? t.all : cat.split('/').pop()}
+                  {t.categories[cat] || cat.split('/').pop()}
                 </button>
               ))}
             </div>
