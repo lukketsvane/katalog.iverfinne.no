@@ -629,7 +629,7 @@ export default function UploadPortal() {
 
   // Calculate edit scale factor when target height changes
   useEffect(() => {
-    if (editTargetHeight && editOriginalBBoxRef.current) {
+    if (editTargetHeight !== '' && editOriginalBBoxRef.current) {
       const originalHeight = editOriginalBBoxRef.current.max.y - editOriginalBBoxRef.current.min.y;
       setEditScaleFactor(Number(editTargetHeight) / originalHeight);
     } else {
@@ -2026,7 +2026,7 @@ export default function UploadPortal() {
                         <input
                           type="number"
                           value={editTargetHeight}
-                          onChange={(e) => setEditTargetHeight(e.target.value ? Number(e.target.value) : '')}
+                          onChange={(e) => setEditTargetHeight(e.target.value === '' ? '' : Number(e.target.value))}
                           placeholder="Height"
                           className="flex-1 px-3 py-2 bg-black border border-neutral-700 rounded text-sm focus:outline-none focus:border-neutral-500"
                         />
@@ -2074,7 +2074,7 @@ export default function UploadPortal() {
                             ...editingItem,
                             metadata: {
                               ...editingItem.metadata,
-                              targetHeight: editTargetHeight || null,
+                              targetHeight: editTargetHeight === '' ? null : editTargetHeight,
                               scaleFactor: editScaleFactor,
                             }
                           };
