@@ -28,6 +28,7 @@ interface CatalogItem {
   type: string;
   category: string;
   tags: string[];
+  thumbnail?: string;
   metadata: {
     materials?: MaterialInfo[];
     colors?: string[];
@@ -54,7 +55,7 @@ const CATEGORIES = [
 ];
 
 export default function UploadPortal() {
-  const [activeTab, setActiveTab] = useState<'upload' | 'browse'>('upload');
+  const [activeTab, setActiveTab] = useState<'upload' | 'browse' | 'bulk'>('upload');
   const [file, setFile] = useState<File | null>(null);
   const [objectName, setObjectName] = useState('');
   const [targetHeight, setTargetHeight] = useState<number | ''>('');
@@ -77,9 +78,17 @@ export default function UploadPortal() {
   } | null>(null);
   const [scaleFactor, setScaleFactor] = useState<number | null>(null);
   const [dragOver, setDragOver] = useState(false);
-  const [transformMode, setTransformMode] = useState<'translate' | 'rotate'>('rotate');
+  const [transformMode, setTransformMode] = useState<'translate' | 'rotate' | 'scale'>('rotate');
   const [catalogItems, setCatalogItems] = useState<CatalogItem[]>([]);
   const [editingItem, setEditingItem] = useState<CatalogItem | null>(null);
+  const [thumbnailDataUrl, setThumbnailDataUrl] = useState<string | null>(null);
+  const [manualPositionSet, setManualPositionSet] = useState(false);
+  
+  // Bulk processing state
+  const [bulkFiles, setBulkFiles] = useState<File[]>([]);
+  const [bulkProcessing, setBulkProcessing] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState<{ current: number; total: number; currentFile: string }>({ current: 0, total: 0, currentFile: '' });
+  const [bulkResults, setBulkResults] = useState<{ name: string; success: boolean; error?: string }[]>([]);
   
   // Viewer controls state
   const [light1On, setLight1On] = useState(true);
@@ -87,6 +96,24 @@ export default function UploadPortal() {
   const [light3On, setLight3On] = useState(true);
   const [gridVisible, setGridVisible] = useState(true);
   const [darkMode, setDarkMode] = useState(true);
+  
+  // Light direction state (azimuth angle in degrees)
+  const [light1Angle, setLight1Angle] = useState(45);
+  const [light2Angle, setLight2Angle] = useState(225);
+  const [light3Angle, setLight3Angle] = useState(180);
+  
+  // Edit mode viewer refs
+  const editContainerRef = useRef<HTMLDivElement>(null);
+  const editSceneRef = useRef<THREE.Scene | null>(null);
+  const editModelRef = useRef<THREE.Group | null>(null);
+  const editRendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const editCameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const editOrbitControlsRef = useRef<OrbitControls | null>(null);
+  const editTransformControlsRef = useRef<TransformControls | null>(null);
+  const [editTransformMode, setEditTransformMode] = useState<'translate' | 'rotate' | 'scale'>('rotate');
+  const [editManualPositionSet, setEditManualPositionSet] = useState(false);
+  const editTransformModeRef = useRef<'translate' | 'rotate' | 'scale'>('rotate');
+  const editManualPositionSetRef = useRef(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -96,6 +123,8 @@ export default function UploadPortal() {
   const orbitControlsRef = useRef<OrbitControls | null>(null);
   const transformControlsRef = useRef<TransformControls | null>(null);
   const originalBBoxRef = useRef<THREE.Box3 | null>(null);
+  const transformModeRef = useRef<'translate' | 'rotate' | 'scale'>('rotate');
+  const manualPositionSetRef = useRef(false);
   
   // Light and grid refs
   const keyLightRef = useRef<THREE.DirectionalLight | null>(null);
@@ -155,8 +184,9 @@ export default function UploadPortal() {
     return () => window.removeEventListener('storage', loadItems);
   }, []);
 
-  // Snap model bottom to ground
-  const snapToGround = useCallback((model: THREE.Group) => {
+  // Snap model bottom to ground (skip if manual position is set and in translate mode)
+  const snapToGround = useCallback((model: THREE.Group, skipSnap?: boolean) => {
+    if (skipSnap) return;
     const box = new THREE.Box3().setFromObject(model);
     const minY = box.min.y;
     model.position.y -= minY;
@@ -279,8 +309,14 @@ export default function UploadPortal() {
       transformControls.addEventListener('dragging-changed', (event) => {
         orbitControls.enabled = !event.value;
         if (!event.value) {
-          // Snap to ground after transform
-          snapToGround(model);
+          // If in translate mode and user dragged, mark as manual position set
+          if (transformModeRef.current === 'translate') {
+            manualPositionSetRef.current = true;
+            setManualPositionSet(true);
+          }
+          // Snap to ground after transform (skip if manual position set in translate mode)
+          const skipSnap = manualPositionSetRef.current && transformModeRef.current === 'translate';
+          snapToGround(model, skipSnap);
         }
       });
 
@@ -327,6 +363,7 @@ export default function UploadPortal() {
     if (transformControlsRef.current) {
       transformControlsRef.current.setMode(transformMode);
     }
+    transformModeRef.current = transformMode;
   }, [transformMode]);
 
   // Update light 1 (key light) visibility
@@ -349,6 +386,36 @@ export default function UploadPortal() {
       rimLightRef.current.visible = light3On;
     }
   }, [light3On]);
+
+  // Update light 1 (key light) direction
+  useEffect(() => {
+    if (keyLightRef.current) {
+      const rad = (light1Angle * Math.PI) / 180;
+      const distance = 8;
+      keyLightRef.current.position.x = Math.cos(rad) * distance;
+      keyLightRef.current.position.z = Math.sin(rad) * distance;
+    }
+  }, [light1Angle]);
+
+  // Update light 2 (fill light) direction
+  useEffect(() => {
+    if (fillLightRef.current) {
+      const rad = (light2Angle * Math.PI) / 180;
+      const distance = 5;
+      fillLightRef.current.position.x = Math.cos(rad) * distance;
+      fillLightRef.current.position.z = Math.sin(rad) * distance;
+    }
+  }, [light2Angle]);
+
+  // Update light 3 (rim light) direction
+  useEffect(() => {
+    if (rimLightRef.current) {
+      const rad = (light3Angle * Math.PI) / 180;
+      const distance = 5;
+      rimLightRef.current.position.x = Math.cos(rad) * distance;
+      rimLightRef.current.position.z = Math.sin(rad) * distance;
+    }
+  }, [light3Angle]);
 
   // Update grid visibility
   useEffect(() => {
@@ -385,6 +452,9 @@ export default function UploadPortal() {
     setObjectName(f.name.replace(/\.(glb|gltf)$/i, ''));
     setUploadResult(null);
     setAiDescription('');
+    setThumbnailDataUrl(null);
+    setManualPositionSet(false);
+    manualPositionSetRef.current = false;
 
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -404,6 +474,144 @@ export default function UploadPortal() {
     }
   }, [targetHeight]);
 
+  // Initialize 3D viewer when editing an item
+  useEffect(() => {
+    if (!editingItem || !editContainerRef.current) return;
+
+    // Cleanup existing
+    if (editTransformControlsRef.current) {
+      editTransformControlsRef.current.dispose();
+    }
+    if (editRendererRef.current) {
+      editRendererRef.current.dispose();
+    }
+    editContainerRef.current.innerHTML = '';
+
+    const width = editContainerRef.current.clientWidth;
+    const height = editContainerRef.current.clientHeight;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x000000);
+    editSceneRef.current = scene;
+
+    const camera = new THREE.PerspectiveCamera(45, width / height, 0.001, 1000);
+    camera.position.set(2, 2, 2);
+    editCameraRef.current = camera;
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true, alpha: true });
+    renderer.setSize(width, height);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.0;
+    editContainerRef.current.appendChild(renderer.domElement);
+    editRendererRef.current = renderer;
+
+    const orbitControls = new OrbitControls(camera, renderer.domElement);
+    orbitControls.enableDamping = true;
+    editOrbitControlsRef.current = orbitControls;
+
+    // Add lights
+    const keyLight = new THREE.DirectionalLight(0xffffff, 2.5);
+    keyLight.position.set(5, 8, 5);
+    scene.add(keyLight);
+
+    const fillLight = new THREE.DirectionalLight(0xfff5e6, 1.0);
+    fillLight.position.set(-4, 3, -3);
+    scene.add(fillLight);
+
+    const rimLight = new THREE.DirectionalLight(0xe6f0ff, 1.5);
+    rimLight.position.set(0, 5, -5);
+    scene.add(rimLight);
+
+    // Grid
+    const gridHelper = new THREE.GridHelper(4, 20, 0x333333, 0x222222);
+    scene.add(gridHelper);
+
+    // Load model from URL
+    const loader = new GLTFLoader();
+    loader.load(editingItem.url, (gltf) => {
+      const model = gltf.scene;
+      editModelRef.current = model;
+
+      // Enable shadows on all meshes
+      model.traverse((node) => {
+        if ((node as THREE.Mesh).isMesh) {
+          (node as THREE.Mesh).castShadow = true;
+          (node as THREE.Mesh).receiveShadow = true;
+        }
+      });
+
+      const box = new THREE.Box3().setFromObject(model);
+      const center = box.getCenter(new THREE.Vector3());
+      const size = box.getSize(new THREE.Vector3());
+
+      // Center horizontally, snap bottom to ground
+      model.position.set(-center.x, -box.min.y, -center.z);
+
+      const maxDim = Math.max(size.x, size.y, size.z);
+      const scale = 2 / maxDim;
+      model.scale.setScalar(scale);
+
+      // Re-snap after scaling
+      snapToGround(model);
+
+      scene.add(model);
+
+      // Setup transform controls
+      const transformControls = new TransformControls(camera, renderer.domElement);
+      transformControls.attach(model);
+      transformControls.setMode(editTransformModeRef.current);
+      scene.add(transformControls);
+      editTransformControlsRef.current = transformControls;
+
+      // Disable orbit controls while dragging transform
+      transformControls.addEventListener('dragging-changed', (event) => {
+        orbitControls.enabled = !event.value;
+        if (!event.value) {
+          if (editTransformModeRef.current === 'translate') {
+            editManualPositionSetRef.current = true;
+            setEditManualPositionSet(true);
+          }
+          const skipSnap = editManualPositionSetRef.current && editTransformModeRef.current === 'translate';
+          snapToGround(model, skipSnap);
+        }
+      });
+    });
+
+    let animationId: number;
+    const animate = () => {
+      animationId = requestAnimationFrame(animate);
+      orbitControls.update();
+      renderer.render(scene, camera);
+    };
+    animate();
+
+    return () => {
+      cancelAnimationFrame(animationId);
+      if (editTransformControlsRef.current) {
+        editTransformControlsRef.current.dispose();
+      }
+      if (editRendererRef.current) {
+        editRendererRef.current.dispose();
+      }
+      editSceneRef.current = null;
+      editModelRef.current = null;
+      editRendererRef.current = null;
+      editCameraRef.current = null;
+      editOrbitControlsRef.current = null;
+      editTransformControlsRef.current = null;
+    };
+  }, [editingItem?.id, snapToGround]);
+
+  // Update edit transform mode
+  useEffect(() => {
+    if (editTransformControlsRef.current) {
+      editTransformControlsRef.current.setMode(editTransformMode);
+    }
+    editTransformModeRef.current = editTransformMode;
+  }, [editTransformMode]);
+
   const addTag = (tag: string) => {
     const t = tag.trim().toLowerCase();
     if (t && !tags.includes(t)) {
@@ -412,12 +620,108 @@ export default function UploadPortal() {
     setTagInput('');
   };
 
+  // Auto-crop transparent image to remove empty space around subject
+  const autoCropImage = (canvas: HTMLCanvasElement): string => {
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return canvas.toDataURL('image/png');
+
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const { data, width, height } = imageData;
+
+    let minX = width, minY = height, maxX = 0, maxY = 0;
+    let hasContent = false;
+
+    // Find bounding box of non-transparent pixels
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const alpha = data[(y * width + x) * 4 + 3];
+        if (alpha > 10) { // Threshold for considering a pixel as content
+          hasContent = true;
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+
+    if (!hasContent) return canvas.toDataURL('image/png');
+
+    // Add padding
+    const padding = 10;
+    minX = Math.max(0, minX - padding);
+    minY = Math.max(0, minY - padding);
+    maxX = Math.min(width - 1, maxX + padding);
+    maxY = Math.min(height - 1, maxY + padding);
+
+    const cropWidth = maxX - minX + 1;
+    const cropHeight = maxY - minY + 1;
+
+    // Create cropped canvas
+    const croppedCanvas = document.createElement('canvas');
+    croppedCanvas.width = cropWidth;
+    croppedCanvas.height = cropHeight;
+    const croppedCtx = croppedCanvas.getContext('2d');
+    if (!croppedCtx) return canvas.toDataURL('image/png');
+
+    croppedCtx.drawImage(canvas, minX, minY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+
+    return croppedCanvas.toDataURL('image/png');
+  };
+
+  // Capture thumbnail with transparent background and auto-crop
+  const captureThumbnail = (): string | null => {
+    if (!rendererRef.current || !sceneRef.current || !cameraRef.current) return null;
+
+    // Save current background
+    const originalBackground = sceneRef.current.background;
+    
+    // Temporarily hide transform controls and grid for clean screenshot
+    if (transformControlsRef.current) {
+      transformControlsRef.current.visible = false;
+    }
+    const gridWasVisible = gridRef.current?.visible;
+    if (gridRef.current) {
+      gridRef.current.visible = false;
+    }
+
+    // Set transparent background
+    sceneRef.current.background = null;
+
+    // Render a frame
+    rendererRef.current.render(sceneRef.current, cameraRef.current);
+
+    // Get the canvas and auto-crop
+    const thumbnailDataUrl = autoCropImage(rendererRef.current.domElement);
+
+    // Restore settings
+    sceneRef.current.background = originalBackground;
+    if (transformControlsRef.current) {
+      transformControlsRef.current.visible = true;
+    }
+    if (gridRef.current && gridWasVisible !== undefined) {
+      gridRef.current.visible = gridWasVisible;
+    }
+
+    // Re-render with original settings
+    rendererRef.current.render(sceneRef.current, cameraRef.current);
+
+    return thumbnailDataUrl;
+  };
+
   const analyzeWithAI = async () => {
     if (!rendererRef.current) return;
 
     setIsAnalyzing(true);
 
     try {
+      // Capture thumbnail with transparent background and auto-crop
+      const thumbnailResult = captureThumbnail();
+      if (thumbnailResult) {
+        setThumbnailDataUrl(thumbnailResult);
+      }
+
+      // For AI analysis, we need the full screenshot (not cropped) with background for context
       // Temporarily hide transform controls for clean screenshot
       if (transformControlsRef.current) {
         transformControlsRef.current.visible = false;
@@ -428,7 +732,8 @@ export default function UploadPortal() {
         rendererRef.current.render(sceneRef.current, cameraRef.current);
       }
 
-      const screenshot = rendererRef.current.domElement.toDataURL('image/png').split(',')[1];
+      const screenshotDataUrl = rendererRef.current.domElement.toDataURL('image/png');
+      const screenshot = screenshotDataUrl.split(',')[1];
 
       // Restore transform controls
       if (transformControlsRef.current) {
@@ -488,6 +793,9 @@ export default function UploadPortal() {
       // Clone and bake in transform (position as origin, rotation applied)
       const exportScene = modelRef.current.clone();
       
+      // Get the current scale from the model (preview scale)
+      const currentScale = modelRef.current.scale.clone();
+      
       // Apply current transformation to geometry
       exportScene.updateMatrixWorld(true);
       exportScene.traverse((node) => {
@@ -502,9 +810,17 @@ export default function UploadPortal() {
         }
       });
 
-      // Apply scale factor if set
+      // Reset the export scene transform since geometry is already baked
+      exportScene.position.set(0, 0, 0);
+      exportScene.rotation.set(0, 0, 0);
+      exportScene.scale.set(1, 1, 1);
+
+      // Apply scale factor uniformly if set (for real-world dimensions)
       if (scaleFactor && originalBBoxRef.current) {
-        exportScene.scale.setScalar(scaleFactor);
+        // The scaleFactor is relative to original model, but geometry is already baked with preview scale
+        // So we need to apply: (scaleFactor / currentScale) to get correct final size
+        const finalScale = scaleFactor / currentScale.x;
+        exportScene.scale.setScalar(finalScale);
       }
 
       const exporter = new GLTFExporter();
@@ -547,6 +863,7 @@ export default function UploadPortal() {
         type: '3d',
         category,
         tags,
+        thumbnail: thumbnailDataUrl || undefined,
         metadata: {
           materials,
           colors,
@@ -568,6 +885,278 @@ export default function UploadPortal() {
     } finally {
       setIsUploading(false);
     }
+  };
+
+  // Bulk process a single file
+  const processSingleFile = async (
+    fileToProcess: File,
+    scene: THREE.Scene,
+    camera: THREE.PerspectiveCamera,
+    renderer: THREE.WebGLRenderer
+  ): Promise<{ success: boolean; error?: string }> => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        if (!e.target?.result) {
+          resolve({ success: false, error: 'Failed to read file' });
+          return;
+        }
+
+        try {
+          const arrayBuffer = e.target.result as ArrayBuffer;
+          const loader = new GLTFLoader();
+          const blob = new Blob([arrayBuffer]);
+          const url = URL.createObjectURL(blob);
+
+          loader.load(url, async (gltf) => {
+            try {
+              const model = gltf.scene;
+
+              // Enable shadows on all meshes
+              model.traverse((node) => {
+                if ((node as THREE.Mesh).isMesh) {
+                  (node as THREE.Mesh).castShadow = true;
+                  (node as THREE.Mesh).receiveShadow = true;
+                }
+              });
+
+              // Center and scale model
+              const box = new THREE.Box3().setFromObject(model);
+              const center = box.getCenter(new THREE.Vector3());
+              const size = box.getSize(new THREE.Vector3());
+              model.position.set(-center.x, -box.min.y, -center.z);
+              const maxDim = Math.max(size.x, size.y, size.z);
+              const scale = 2 / maxDim;
+              model.scale.setScalar(scale);
+
+              // Snap to ground
+              const newBox = new THREE.Box3().setFromObject(model);
+              model.position.y -= newBox.min.y;
+
+              // Add to scene
+              scene.add(model);
+
+              // Position camera
+              camera.position.set(2, 2, 2);
+              camera.lookAt(0, 0.5, 0);
+
+              // Render for thumbnail (with transparent background)
+              const originalBackground = scene.background;
+              scene.background = null;
+              renderer.render(scene, camera);
+              const thumbnailCanvas = renderer.domElement;
+              const thumbnail = autoCropImage(thumbnailCanvas);
+              scene.background = originalBackground;
+
+              // Render for AI (with background)
+              renderer.render(scene, camera);
+              const screenshotDataUrl = renderer.domElement.toDataURL('image/png');
+              const screenshot = screenshotDataUrl.split(',')[1];
+
+              // Extract materials
+              const mats: MaterialInfo[] = [];
+              const cols: string[] = [];
+              const colorSet = new Set<string>();
+              const matSet = new Set<string>();
+
+              model.traverse((node) => {
+                if ((node as THREE.Mesh).isMesh) {
+                  const mesh = node as THREE.Mesh;
+                  const meshMats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+                  meshMats.forEach((mat) => {
+                    const m = mat as THREE.MeshStandardMaterial;
+                    const key = `${m.name}-${m.color?.getHexString()}`;
+                    if (!matSet.has(key)) {
+                      matSet.add(key);
+                      mats.push({
+                        name: m.name || 'Unnamed',
+                        type: m.type.replace('Material', ''),
+                        color: m.color ? `#${m.color.getHexString()}` : '#cccccc',
+                        metalness: m.metalness ?? 0,
+                        roughness: m.roughness ?? 1,
+                      });
+                    }
+                    if (m.color) {
+                      const hex = `#${m.color.getHexString()}`;
+                      if (!colorSet.has(hex) && hex !== '#000000') {
+                        colorSet.add(hex);
+                        cols.push(hex);
+                      }
+                    }
+                  });
+                }
+              });
+
+              // Call AI for analysis
+              let aiData: { name?: string; heightMm?: number; tags?: string[]; category?: string; description?: string } = {};
+              try {
+                const response = await fetch('/api/analyze', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    image: screenshot,
+                    materials: mats.map((m) => ({
+                      name: m.name,
+                      type: m.type,
+                      color: m.color,
+                      metalness: m.metalness,
+                      roughness: m.roughness,
+                    })),
+                  }),
+                });
+                aiData = await response.json();
+              } catch (err) {
+                console.error('AI analysis failed for bulk item:', err);
+              }
+
+              const itemName = aiData.name || fileToProcess.name.replace(/\.(glb|gltf)$/i, '');
+              const itemCategory = aiData.category || 'misc';
+              const itemTags = aiData.tags || [];
+              const itemHeight = aiData.heightMm || null;
+              const itemDescription = aiData.description || '';
+
+              // Calculate scale factor
+              const originalHeight = box.max.y - box.min.y;
+              const itemScaleFactor = itemHeight ? itemHeight / originalHeight : null;
+
+              // Export model
+              const exportScene = model.clone();
+              exportScene.updateMatrixWorld(true);
+              exportScene.traverse((node) => {
+                if ((node as THREE.Mesh).isMesh) {
+                  const mesh = node as THREE.Mesh;
+                  mesh.geometry = mesh.geometry.clone();
+                  mesh.geometry.applyMatrix4(mesh.matrixWorld);
+                  mesh.position.set(0, 0, 0);
+                  mesh.rotation.set(0, 0, 0);
+                  mesh.scale.set(1, 1, 1);
+                  mesh.updateMatrix();
+                }
+              });
+
+              exportScene.position.set(0, 0, 0);
+              exportScene.rotation.set(0, 0, 0);
+              exportScene.scale.set(1, 1, 1);
+
+              if (itemScaleFactor) {
+                const finalScale = itemScaleFactor / scale;
+                exportScene.scale.setScalar(finalScale);
+              }
+
+              const exporter = new GLTFExporter();
+              const glb = await new Promise<ArrayBuffer>((resolve, reject) => {
+                exporter.parse(
+                  exportScene,
+                  (result) => resolve(result as ArrayBuffer),
+                  (error) => reject(error),
+                  { binary: true }
+                );
+              });
+
+              const uploadBlob = new Blob([glb], { type: 'model/gltf-binary' });
+              const safeName = itemName.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-');
+              const filename = `${safeName}-${Date.now()}.glb`;
+              const pathname = `${itemCategory}/${filename}`;
+
+              const result = await upload(pathname, uploadBlob, {
+                access: 'public',
+                handleUploadUrl: '/api/upload/token',
+              });
+
+              const catalogItem: CatalogItem = {
+                id: Date.now() + Math.random(),
+                name: itemName,
+                url: result.url,
+                type: '3d',
+                category: itemCategory,
+                tags: itemTags,
+                thumbnail,
+                metadata: {
+                  materials: mats,
+                  colors: cols,
+                  targetHeight: itemHeight,
+                  scaleFactor: itemScaleFactor,
+                  description: itemDescription,
+                  uploadedAt: new Date().toISOString(),
+                },
+              };
+
+              const existing = JSON.parse(localStorage.getItem('katalog-config') || '{"items":[]}');
+              existing.items.push(catalogItem);
+              localStorage.setItem('katalog-config', JSON.stringify(existing));
+              setCatalogItems(existing.items);
+
+              // Remove model from scene
+              scene.remove(model);
+              URL.revokeObjectURL(url);
+
+              resolve({ success: true });
+            } catch (err) {
+              console.error('Error processing model:', err);
+              resolve({ success: false, error: String(err) });
+            }
+          }, undefined, (error) => {
+            resolve({ success: false, error: String(error) });
+          });
+        } catch (err) {
+          resolve({ success: false, error: String(err) });
+        }
+      };
+      reader.onerror = () => resolve({ success: false, error: 'Failed to read file' });
+      reader.readAsArrayBuffer(fileToProcess);
+    });
+  };
+
+  // Bulk process all files
+  const processBulkFiles = async () => {
+    if (bulkFiles.length === 0) return;
+
+    setBulkProcessing(true);
+    setBulkResults([]);
+    setBulkProgress({ current: 0, total: bulkFiles.length, currentFile: '' });
+
+    // Create off-screen renderer for bulk processing
+    const width = 512;
+    const height = 512;
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x000000);
+
+    const camera = new THREE.PerspectiveCamera(45, width / height, 0.001, 1000);
+    camera.position.set(2, 2, 2);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true, alpha: true });
+    renderer.setSize(width, height);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.0;
+
+    // Add lights
+    const keyLight = new THREE.DirectionalLight(0xffffff, 2.5);
+    keyLight.position.set(5, 8, 5);
+    scene.add(keyLight);
+
+    const fillLight = new THREE.DirectionalLight(0xfff5e6, 1.0);
+    fillLight.position.set(-4, 3, -3);
+    scene.add(fillLight);
+
+    const rimLight = new THREE.DirectionalLight(0xe6f0ff, 1.5);
+    rimLight.position.set(0, 5, -5);
+    scene.add(rimLight);
+
+    const results: { name: string; success: boolean; error?: string }[] = [];
+
+    for (let i = 0; i < bulkFiles.length; i++) {
+      const file = bulkFiles[i];
+      setBulkProgress({ current: i + 1, total: bulkFiles.length, currentFile: file.name });
+
+      const result = await processSingleFile(file, scene, camera, renderer);
+      results.push({ name: file.name, ...result });
+      setBulkResults([...results]);
+    }
+
+    renderer.dispose();
+    setBulkProcessing(false);
+    setBulkFiles([]);
   };
 
   const groupedCategories = CATEGORIES.reduce((acc, cat) => {
@@ -608,6 +1197,12 @@ export default function UploadPortal() {
             className={`text-xs transition ${activeTab === 'upload' ? 'text-white' : 'text-neutral-500 hover:text-white'}`}
           >
             Upload
+          </button>
+          <button
+            onClick={() => setActiveTab('bulk')}
+            className={`text-xs transition ${activeTab === 'bulk' ? 'text-white' : 'text-neutral-500 hover:text-white'}`}
+          >
+            Bulk
           </button>
           <button
             onClick={() => setActiveTab('browse')}
@@ -681,6 +1276,31 @@ export default function UploadPortal() {
                   >
                     Move
                   </button>
+                  <button
+                    onClick={() => setTransformMode('scale')}
+                    className={`px-3 py-1.5 text-xs rounded transition ${
+                      transformMode === 'scale' 
+                        ? 'bg-white text-black' 
+                        : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
+                    }`}
+                  >
+                    Scale
+                  </button>
+                  {manualPositionSet && (
+                    <button
+                      onClick={() => {
+                        setManualPositionSet(false);
+                        manualPositionSetRef.current = false;
+                        if (modelRef.current) {
+                          snapToGround(modelRef.current);
+                        }
+                      }}
+                      className="px-3 py-1.5 text-xs rounded bg-amber-600 text-white hover:bg-amber-500 transition"
+                      title="Re-enable ground snapping"
+                    >
+                      Snap
+                    </button>
+                  )}
                 </div>
                 {/* Viewer controls - bottom right */}
                 <div className="absolute bottom-3 right-3 flex gap-1.5">
@@ -790,6 +1410,54 @@ export default function UploadPortal() {
                 <p className="text-xs text-blue-300">{aiDescription}</p>
               </div>
             )}
+
+            {/* Light Direction Controls */}
+            {file && (
+              <div className="bg-neutral-900 border border-neutral-800 rounded-lg p-4">
+                <div className="text-xs text-neutral-400 mb-3">Light Directions</div>
+                <div className="space-y-3">
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-neutral-500 w-12">Key</span>
+                    <input
+                      type="range"
+                      min="0"
+                      max="360"
+                      value={light1Angle}
+                      onChange={(e) => setLight1Angle(Number(e.target.value))}
+                      className="flex-1 h-1 bg-neutral-700 rounded-lg appearance-none cursor-pointer accent-yellow-500"
+                      disabled={!light1On}
+                    />
+                    <span className="text-xs text-neutral-500 w-8">{light1Angle}°</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-neutral-500 w-12">Fill</span>
+                    <input
+                      type="range"
+                      min="0"
+                      max="360"
+                      value={light2Angle}
+                      onChange={(e) => setLight2Angle(Number(e.target.value))}
+                      className="flex-1 h-1 bg-neutral-700 rounded-lg appearance-none cursor-pointer accent-yellow-500"
+                      disabled={!light2On}
+                    />
+                    <span className="text-xs text-neutral-500 w-8">{light2Angle}°</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-neutral-500 w-12">Rim</span>
+                    <input
+                      type="range"
+                      min="0"
+                      max="360"
+                      value={light3Angle}
+                      onChange={(e) => setLight3Angle(Number(e.target.value))}
+                      className="flex-1 h-1 bg-neutral-700 rounded-lg appearance-none cursor-pointer accent-yellow-500"
+                      disabled={!light3On}
+                    />
+                    <span className="text-xs text-neutral-500 w-8">{light3Angle}°</span>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="space-y-3">
@@ -890,6 +1558,64 @@ export default function UploadPortal() {
               </div>
             )}
 
+            {/* Thumbnail Preview */}
+            {file && (
+              <div className="bg-neutral-900 border border-neutral-800 rounded-lg p-4">
+                <div className="text-xs text-neutral-400 mb-2">Thumbnail</div>
+                <div className="flex gap-3 items-start">
+                  <div 
+                    className="w-20 h-20 rounded border border-neutral-700 overflow-hidden flex items-center justify-center"
+                    style={{ background: 'repeating-conic-gradient(#333 0% 25%, #222 0% 50%) 50% / 10px 10px' }}
+                  >
+                    {thumbnailDataUrl ? (
+                      <img src={thumbnailDataUrl} alt="Thumbnail" className="w-full h-full object-contain" />
+                    ) : (
+                      <span className="text-neutral-600 text-[10px]">No thumbnail</span>
+                    )}
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <button
+                      onClick={() => {
+                        const thumbnail = captureThumbnail();
+                        if (thumbnail) setThumbnailDataUrl(thumbnail);
+                      }}
+                      className="px-3 py-1.5 text-xs bg-neutral-800 rounded hover:bg-neutral-700 transition"
+                    >
+                      Capture
+                    </button>
+                    <label className="px-3 py-1.5 text-xs bg-neutral-800 rounded hover:bg-neutral-700 transition cursor-pointer text-center">
+                      Upload
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            const reader = new FileReader();
+                            reader.onload = (ev) => {
+                              if (ev.target?.result) {
+                                setThumbnailDataUrl(ev.target.result as string);
+                              }
+                            };
+                            reader.readAsDataURL(file);
+                          }
+                        }}
+                      />
+                    </label>
+                    {thumbnailDataUrl && (
+                      <button
+                        onClick={() => setThumbnailDataUrl(null)}
+                        className="px-3 py-1.5 text-xs bg-red-900/30 text-red-400 rounded hover:bg-red-900/50 transition"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
             <button
               onClick={handleUpload}
               disabled={!file || isUploading}
@@ -920,6 +1646,130 @@ export default function UploadPortal() {
             )}
           </div>
         </main>
+      ) : activeTab === 'bulk' ? (
+        /* Bulk Processing Tab */
+        <main className="max-w-4xl mx-auto p-6">
+          <div className="space-y-6">
+            <div className="text-center">
+              <h2 className="font-mono text-lg mb-2">Bulk Processing</h2>
+              <p className="text-sm text-neutral-400">Upload multiple GLB files to process them automatically with AI</p>
+            </div>
+
+            {/* Drop zone for multiple files */}
+            <div
+              className={`bg-neutral-900 border-2 border-dashed rounded-lg p-12 text-center cursor-pointer transition-all
+                ${bulkFiles.length > 0 ? 'border-green-500/50 bg-green-500/5' : 'border-neutral-700 hover:border-neutral-500'}`}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                const files = Array.from(e.dataTransfer.files).filter(
+                  f => f.name.endsWith('.glb') || f.name.endsWith('.gltf')
+                );
+                setBulkFiles(prev => [...prev, ...files]);
+              }}
+              onClick={() => document.getElementById('bulkFileInput')?.click()}
+            >
+              <svg className="w-12 h-12 mx-auto mb-4 text-neutral-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+              </svg>
+              <p className="font-mono text-sm text-neutral-400 mb-2">
+                Drop multiple GLB/GLTF files here
+              </p>
+              <p className="text-xs text-neutral-600">or click to select files</p>
+              <input
+                id="bulkFileInput"
+                type="file"
+                accept=".glb,.gltf"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  const files = Array.from(e.target.files || []).filter(
+                    f => f.name.endsWith('.glb') || f.name.endsWith('.gltf')
+                  );
+                  setBulkFiles(prev => [...prev, ...files]);
+                }}
+              />
+            </div>
+
+            {/* File list */}
+            {bulkFiles.length > 0 && (
+              <div className="bg-neutral-900 border border-neutral-800 rounded-lg p-4">
+                <div className="flex justify-between items-center mb-3">
+                  <span className="text-sm text-neutral-400">{bulkFiles.length} files selected</span>
+                  <button
+                    onClick={() => setBulkFiles([])}
+                    className="text-xs text-red-400 hover:text-red-300"
+                  >
+                    Clear all
+                  </button>
+                </div>
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {bulkFiles.map((f, i) => (
+                    <div key={i} className="flex justify-between items-center p-2 bg-black rounded">
+                      <span className="text-xs truncate flex-1">{f.name}</span>
+                      <span className="text-xs text-neutral-500 ml-2">{(f.size / 1024 / 1024).toFixed(1)} MB</span>
+                      <button
+                        onClick={() => setBulkFiles(bulkFiles.filter((_, j) => j !== i))}
+                        className="ml-2 text-neutral-500 hover:text-red-400"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Process button */}
+            <button
+              onClick={processBulkFiles}
+              disabled={bulkFiles.length === 0 || bulkProcessing}
+              className="w-full py-4 rounded-lg font-medium text-sm bg-white text-black hover:bg-neutral-200 disabled:bg-neutral-800 disabled:text-neutral-500 transition-all"
+            >
+              {bulkProcessing ? `Processing ${bulkProgress.current}/${bulkProgress.total}...` : `Process ${bulkFiles.length} Files`}
+            </button>
+
+            {/* Progress */}
+            {bulkProcessing && (
+              <div className="space-y-2">
+                <div className="h-2 bg-neutral-800 rounded overflow-hidden">
+                  <div 
+                    className="h-full bg-blue-500 transition-all" 
+                    style={{ width: `${(bulkProgress.current / bulkProgress.total) * 100}%` }} 
+                  />
+                </div>
+                <p className="text-xs text-neutral-400 text-center">
+                  Processing: {bulkProgress.currentFile}
+                </p>
+              </div>
+            )}
+
+            {/* Results */}
+            {bulkResults.length > 0 && (
+              <div className="bg-neutral-900 border border-neutral-800 rounded-lg p-4">
+                <h3 className="text-sm font-medium mb-3">Results</h3>
+                <div className="space-y-2 max-h-64 overflow-y-auto">
+                  {bulkResults.map((result, i) => (
+                    <div 
+                      key={i} 
+                      className={`flex items-center gap-2 p-2 rounded ${
+                        result.success ? 'bg-green-900/20' : 'bg-red-900/20'
+                      }`}
+                    >
+                      <span className={result.success ? 'text-green-400' : 'text-red-400'}>
+                        {result.success ? '✓' : '✗'}
+                      </span>
+                      <span className="text-xs flex-1 truncate">{result.name}</span>
+                      {result.error && (
+                        <span className="text-xs text-red-400 truncate max-w-32">{result.error}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </main>
       ) : (
         /* Browse Tab */
         <main className="max-w-6xl mx-auto p-6">
@@ -944,8 +1794,16 @@ export default function UploadPortal() {
                   key={item.id} 
                   className="bg-neutral-900 border border-neutral-800 rounded-lg overflow-hidden group"
                 >
-                  <div className="aspect-square bg-neutral-800 flex items-center justify-center">
-                    <span className="text-neutral-600 text-xs font-mono">3D</span>
+                  <div className="aspect-square bg-neutral-800 flex items-center justify-center overflow-hidden">
+                    {item.thumbnail ? (
+                      <img 
+                        src={item.thumbnail} 
+                        alt={item.name}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <span className="text-neutral-600 text-xs font-mono">3D</span>
+                    )}
                   </div>
                   <div className="p-3">
                     <h3 className="font-medium text-sm truncate">{item.name}</h3>
@@ -980,60 +1838,212 @@ export default function UploadPortal() {
           {/* Edit Modal */}
           {editingItem && (
             <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
-              <div className="bg-neutral-900 border border-neutral-800 rounded-lg p-6 w-full max-w-md">
-                <h3 className="font-mono text-sm mb-4">Edit Item</h3>
-                <div className="space-y-3">
-                  <input
-                    type="text"
-                    value={editingItem.name}
-                    onChange={(e) => setEditingItem({ ...editingItem, name: e.target.value })}
-                    placeholder="Name"
-                    className="w-full px-3 py-2 bg-black border border-neutral-800 rounded text-sm focus:outline-none focus:border-neutral-600"
-                  />
-                  <select
-                    value={editingItem.category}
-                    onChange={(e) => setEditingItem({ ...editingItem, category: e.target.value })}
-                    className="w-full px-3 py-2 bg-black border border-neutral-800 rounded text-sm focus:outline-none focus:border-neutral-600"
+              <div className="bg-neutral-900 border border-neutral-800 rounded-lg p-6 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="font-mono text-sm">Edit Item</h3>
+                  <button
+                    onClick={() => setEditingItem(null)}
+                    className="text-neutral-400 hover:text-white"
                   >
-                    {Object.entries(groupedCategories).map(([group, cats]) => (
-                      <optgroup key={group} label={group}>
-                        {cats.map((cat) => (
-                          <option key={cat.value} value={cat.value}>
-                            {cat.label}
-                          </option>
-                        ))}
-                      </optgroup>
-                    ))}
-                  </select>
-                  <div className="flex flex-wrap gap-1.5">
-                    {editingItem.tags.map((tag, i) => (
-                      <span key={i} className="bg-neutral-800 px-2 py-1 rounded text-xs flex items-center gap-1.5">
-                        {tag}
-                        <button 
-                          onClick={() => setEditingItem({ 
-                            ...editingItem, 
-                            tags: editingItem.tags.filter((_, j) => j !== i) 
-                          })} 
-                          className="text-neutral-500 hover:text-white"
+                    ✕
+                  </button>
+                </div>
+                
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {/* 3D Viewer */}
+                  <div className="space-y-3">
+                    <div
+                      ref={editContainerRef}
+                      className="bg-black rounded-lg aspect-video overflow-hidden border border-neutral-800"
+                    />
+                    
+                    {/* Transform controls */}
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setEditTransformMode('rotate')}
+                        className={`px-3 py-1.5 text-xs rounded transition ${
+                          editTransformMode === 'rotate' 
+                            ? 'bg-white text-black' 
+                            : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
+                        }`}
+                      >
+                        Rotate
+                      </button>
+                      <button
+                        onClick={() => setEditTransformMode('translate')}
+                        className={`px-3 py-1.5 text-xs rounded transition ${
+                          editTransformMode === 'translate' 
+                            ? 'bg-white text-black' 
+                            : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
+                        }`}
+                      >
+                        Move
+                      </button>
+                      <button
+                        onClick={() => setEditTransformMode('scale')}
+                        className={`px-3 py-1.5 text-xs rounded transition ${
+                          editTransformMode === 'scale' 
+                            ? 'bg-white text-black' 
+                            : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
+                        }`}
+                      >
+                        Scale
+                      </button>
+                      {editManualPositionSet && (
+                        <button
+                          onClick={() => {
+                            setEditManualPositionSet(false);
+                            if (editModelRef.current) {
+                              snapToGround(editModelRef.current);
+                            }
+                          }}
+                          className="px-3 py-1.5 text-xs rounded bg-amber-600 text-white hover:bg-amber-500 transition"
                         >
-                          x
+                          Snap
                         </button>
-                      </span>
-                    ))}
+                      )}
+                    </div>
+                    
+                    {/* Thumbnail section */}
+                    <div className="bg-neutral-800 rounded-lg p-3">
+                      <div className="text-xs text-neutral-400 mb-2">Thumbnail</div>
+                      <div className="flex gap-3 items-start">
+                        <div 
+                          className="w-16 h-16 rounded border border-neutral-700 overflow-hidden flex items-center justify-center"
+                          style={{ background: 'repeating-conic-gradient(#333 0% 25%, #222 0% 50%) 50% / 10px 10px' }}
+                        >
+                          {editingItem.thumbnail ? (
+                            <img src={editingItem.thumbnail} alt="Thumbnail" className="w-full h-full object-contain" />
+                          ) : (
+                            <span className="text-neutral-600 text-[10px]">None</span>
+                          )}
+                        </div>
+                        <div className="flex flex-col gap-1.5">
+                          <button
+                            onClick={() => {
+                              if (editRendererRef.current && editSceneRef.current && editCameraRef.current) {
+                                // Hide transform controls
+                                if (editTransformControlsRef.current) {
+                                  editTransformControlsRef.current.visible = false;
+                                }
+                                // Transparent background
+                                const origBg = editSceneRef.current.background;
+                                editSceneRef.current.background = null;
+                                editRendererRef.current.render(editSceneRef.current, editCameraRef.current);
+                                const thumbnail = autoCropImage(editRendererRef.current.domElement);
+                                // Restore
+                                editSceneRef.current.background = origBg;
+                                if (editTransformControlsRef.current) {
+                                  editTransformControlsRef.current.visible = true;
+                                }
+                                editRendererRef.current.render(editSceneRef.current, editCameraRef.current);
+                                setEditingItem({ ...editingItem, thumbnail });
+                              }
+                            }}
+                            className="px-2 py-1 text-[10px] bg-neutral-700 rounded hover:bg-neutral-600 transition"
+                          >
+                            Capture
+                          </button>
+                          <label className="px-2 py-1 text-[10px] bg-neutral-700 rounded hover:bg-neutral-600 transition cursor-pointer text-center">
+                            Upload
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) {
+                                  const reader = new FileReader();
+                                  reader.onload = (ev) => {
+                                    if (ev.target?.result) {
+                                      setEditingItem({ ...editingItem, thumbnail: ev.target.result as string });
+                                    }
+                                  };
+                                  reader.readAsDataURL(file);
+                                }
+                              }}
+                            />
+                          </label>
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex gap-2 mt-4">
-                    <button
-                      onClick={() => updateItem(editingItem)}
-                      className="flex-1 py-2 bg-white text-black rounded text-sm hover:bg-neutral-200 transition"
+                  
+                  {/* Form fields */}
+                  <div className="space-y-3">
+                    <input
+                      type="text"
+                      value={editingItem.name}
+                      onChange={(e) => setEditingItem({ ...editingItem, name: e.target.value })}
+                      placeholder="Name"
+                      className="w-full px-3 py-2 bg-black border border-neutral-800 rounded text-sm focus:outline-none focus:border-neutral-600"
+                    />
+                    <select
+                      value={editingItem.category}
+                      onChange={(e) => setEditingItem({ ...editingItem, category: e.target.value })}
+                      className="w-full px-3 py-2 bg-black border border-neutral-800 rounded text-sm focus:outline-none focus:border-neutral-600"
                     >
-                      Save
-                    </button>
-                    <button
-                      onClick={() => setEditingItem(null)}
-                      className="px-4 py-2 bg-neutral-800 rounded text-sm hover:bg-neutral-700 transition"
-                    >
-                      Cancel
-                    </button>
+                      {Object.entries(groupedCategories).map(([group, cats]) => (
+                        <optgroup key={group} label={group}>
+                          {cats.map((cat) => (
+                            <option key={cat.value} value={cat.value}>
+                              {cat.label}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
+                    
+                    <div className="bg-neutral-800 rounded-lg p-3">
+                      <div className="text-xs text-neutral-400 mb-2">Tags</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {editingItem.tags.map((tag, i) => (
+                          <span key={i} className="bg-neutral-700 px-2 py-1 rounded text-xs flex items-center gap-1.5">
+                            {tag}
+                            <button 
+                              onClick={() => setEditingItem({ 
+                                ...editingItem, 
+                                tags: editingItem.tags.filter((_, j) => j !== i) 
+                              })} 
+                              className="text-neutral-400 hover:text-white"
+                            >
+                              ×
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    
+                    {editingItem.metadata?.description && (
+                      <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3">
+                        <p className="text-xs text-blue-300">{editingItem.metadata.description}</p>
+                      </div>
+                    )}
+                    
+                    <div className="text-xs text-neutral-500">
+                      <p>URL: <span className="font-mono text-neutral-400 break-all">{editingItem.url}</span></p>
+                    </div>
+                    
+                    <div className="flex gap-2 mt-4">
+                      <button
+                        onClick={() => updateItem(editingItem)}
+                        className="flex-1 py-2 bg-white text-black rounded text-sm hover:bg-neutral-200 transition"
+                      >
+                        Save
+                      </button>
+                      <button
+                        onClick={() => deleteItem(editingItem.id)}
+                        className="px-4 py-2 bg-red-900/30 text-red-400 rounded text-sm hover:bg-red-900/50 transition"
+                      >
+                        Delete
+                      </button>
+                      <button
+                        onClick={() => setEditingItem(null)}
+                        className="px-4 py-2 bg-neutral-800 rounded text-sm hover:bg-neutral-700 transition"
+                      >
+                        Cancel
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
