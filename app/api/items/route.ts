@@ -9,10 +9,11 @@ export async function GET() {
       limit: 1000,
     });
 
-    // Filter to only GLB/GLTF files and exclude .keep placeholders
+    // Filter to only GLB/GLTF files, exclude .keep placeholders, and exclude models/ folder
     const modelFiles = blobs.filter(blob => 
       blob.pathname.match(/\.(glb|gltf)$/i) && 
-      !blob.pathname.includes('.keep')
+      !blob.pathname.includes('.keep') &&
+      !blob.pathname.startsWith('models/')
     );
 
     // Parse items with metadata

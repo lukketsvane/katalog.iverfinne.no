@@ -35,9 +35,11 @@ const IGNORED_MODELS = ['Sculpt5', 'Sculpt9'];
 const IGNORED_CATEGORY = 'models';
 
 // Viewer configuration constants
-const MODEL_SCALE_FACTOR = 2.5;
-const CAMERA_DISTANCE_MULTIPLIER = 1.2;
-const CAMERA_HEIGHT_MULTIPLIER = 0.7;
+const MODEL_SCALE_FACTOR = 3.0;
+const CAMERA_DISTANCE_MULTIPLIER = 0.9;
+const CAMERA_HEIGHT_MULTIPLIER = 0.5;
+const ZOOM_MIN_DISTANCE = 1;
+const ZOOM_MAX_DISTANCE = 10;
 
 function shouldIgnoreItem(item: CatalogItem): boolean {
   return (
@@ -172,14 +174,6 @@ export default function Katalog() {
                   </button>
                 ))}
               </div>
-
-              {/* Upload link */}
-              <a
-                href="https://katalog-upload.iverfinne.no"
-                className="px-4 py-2 bg-black text-white rounded-lg text-sm font-mono hover:bg-gray-800 transition-colors"
-              >
-                + Upload
-              </a>
             </div>
           </div>
         </div>
@@ -200,13 +194,7 @@ export default function Katalog() {
           </div>
         ) : filteredItems.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-32">
-            <div className="text-gray-400 font-mono text-sm mb-4">No items found</div>
-            <a
-              href="https://katalog-upload.iverfinne.no"
-              className="px-6 py-3 bg-black text-white rounded-lg text-sm font-mono"
-            >
-              Upload your first item
-            </a>
+            <div className="text-gray-400 font-mono text-sm">No items found</div>
           </div>
         ) : (
           <div className={`grid ${gridClass} gap-4`}>
@@ -386,9 +374,11 @@ function ItemModal({ item, onClose }: { item: CatalogItem; onClose: () => void }
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
-    // Disable pan and zoom - only allow orbit
+    // Disable pan, allow limited zoom
     controls.enablePan = false;
-    controls.enableZoom = false;
+    controls.enableZoom = true;
+    controls.minDistance = ZOOM_MIN_DISTANCE;
+    controls.maxDistance = ZOOM_MAX_DISTANCE;
 
     scene.add(new THREE.AmbientLight(0xffffff, 0.6));
     const keyLight = new THREE.DirectionalLight(0xffffff, 1);
