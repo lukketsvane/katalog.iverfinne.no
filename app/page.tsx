@@ -196,6 +196,46 @@ export default function UploadPortal() {
     model.position.y -= minY;
   }, []);
 
+  // Setup click handler to hide/show gizmo based on click target
+  const setupGizmoClickHandler = useCallback((
+    renderer: THREE.WebGLRenderer,
+    camera: THREE.PerspectiveCamera,
+    model: THREE.Group,
+    transformControls: TransformControls
+  ) => {
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+    
+    const handleCanvasClick = (event: MouseEvent) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      
+      raycaster.setFromCamera(mouse, camera);
+      
+      // Get all meshes from the model
+      const meshes: THREE.Object3D[] = [];
+      model.traverse((node) => {
+        if ((node as THREE.Mesh).isMesh) {
+          meshes.push(node);
+        }
+      });
+      
+      const intersects = raycaster.intersectObjects(meshes, true);
+      
+      if (intersects.length > 0) {
+        // Clicked on the model - show gizmo
+        transformControls.visible = true;
+      } else {
+        // Clicked on empty space - hide gizmo
+        transformControls.visible = false;
+      }
+    };
+    
+    renderer.domElement.addEventListener('click', handleCanvasClick);
+    return handleCanvasClick;
+  }, []);
+
   const initPreview = useCallback((arrayBuffer: ArrayBuffer) => {
     if (!containerRef.current) return;
 
@@ -325,6 +365,9 @@ export default function UploadPortal() {
         }
       });
 
+      // Setup click handler to hide/show gizmo
+      setupGizmoClickHandler(renderer, camera, model, transformControls);
+
       let triangles = 0;
       const matSet = new Set<string>();
 
@@ -361,7 +404,7 @@ export default function UploadPortal() {
       renderer.render(scene, camera);
     };
     animate();
-  }, [extractMaterials, snapToGround]);
+  }, [extractMaterials, snapToGround, setupGizmoClickHandler]);
 
   // Update transform mode
   useEffect(() => {
@@ -592,6 +635,9 @@ export default function UploadPortal() {
           snapToGround(model, skipSnap);
         }
       });
+
+      // Setup click handler to hide/show gizmo
+      setupGizmoClickHandler(renderer, camera, model, transformControls);
     });
 
     let animationId: number;
@@ -617,7 +663,7 @@ export default function UploadPortal() {
       editOrbitControlsRef.current = null;
       editTransformControlsRef.current = null;
     };
-  }, [editingItem?.id, snapToGround]);
+  }, [editingItem?.id, snapToGround, setupGizmoClickHandler]);
 
   // Update edit transform mode
   useEffect(() => {
@@ -645,7 +691,7 @@ export default function UploadPortal() {
     setTagInput('');
   };
 
-  // Auto-crop transparent image to remove empty space around subject
+  // Auto-crop transparent image to remove empty space around subject, then make 1:1 aspect
   const autoCropImage = (canvas: HTMLCanvasElement): string => {
     const ctx = canvas.getContext('2d');
     if (!ctx) return canvas.toDataURL('image/png');
@@ -691,7 +737,20 @@ export default function UploadPortal() {
 
     croppedCtx.drawImage(canvas, minX, minY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
 
-    return croppedCanvas.toDataURL('image/png');
+    // Now create a 1:1 aspect ratio canvas with the cropped content centered
+    const maxDim = Math.max(cropWidth, cropHeight);
+    const squareCanvas = document.createElement('canvas');
+    squareCanvas.width = maxDim;
+    squareCanvas.height = maxDim;
+    const squareCtx = squareCanvas.getContext('2d');
+    if (!squareCtx) return croppedCanvas.toDataURL('image/png');
+
+    // Center the cropped image on the square canvas (transparent background)
+    const offsetX = (maxDim - cropWidth) / 2;
+    const offsetY = (maxDim - cropHeight) / 2;
+    squareCtx.drawImage(croppedCanvas, offsetX, offsetY);
+
+    return squareCanvas.toDataURL('image/png');
   };
 
   // Capture thumbnail with transparent background and auto-crop
@@ -1190,9 +1249,24 @@ export default function UploadPortal() {
     return acc;
   }, {} as Record<string, typeof CATEGORIES>);
 
-  // Delete item from catalog
-  const deleteItem = (id: number) => {
+  // Delete item from catalog and blob storage
+  const deleteItem = async (id: number) => {
     const existing = JSON.parse(localStorage.getItem('katalog-config') || '{"items":[]}');
+    const itemToDelete = existing.items.find((item: CatalogItem) => item.id === id);
+    
+    // Delete from blob storage
+    if (itemToDelete?.url) {
+      try {
+        await fetch('/api/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: itemToDelete.url }),
+        });
+      } catch (error) {
+        console.error('Failed to delete from blob storage:', error);
+      }
+    }
+    
     existing.items = existing.items.filter((item: CatalogItem) => item.id !== id);
     localStorage.setItem('katalog-config', JSON.stringify(existing));
     setCatalogItems(existing.items);
@@ -1277,7 +1351,7 @@ export default function UploadPortal() {
               <div className="relative">
                 <div
                   ref={containerRef}
-                  className="bg-neutral-900 rounded-lg aspect-video overflow-hidden border border-neutral-800"
+                  className="bg-neutral-900 rounded-lg aspect-square overflow-hidden border border-neutral-800"
                 />
                 {/* Transform mode buttons */}
                 <div className="absolute bottom-3 left-3 flex gap-2">
@@ -1879,7 +1953,7 @@ export default function UploadPortal() {
                   <div className="space-y-3">
                     <div
                       ref={editContainerRef}
-                      className="bg-black rounded-lg aspect-video overflow-hidden border border-neutral-800"
+                      className="bg-black rounded-lg aspect-square overflow-hidden border border-neutral-800"
                     />
                     
                     {/* Transform controls */}
