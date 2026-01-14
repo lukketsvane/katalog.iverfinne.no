@@ -2149,12 +2149,11 @@ export default function UploadPortal() {
                         type="date"
                         value={editingItem.metadata?.uploadedAt ? new Date(editingItem.metadata.uploadedAt).toISOString().split('T')[0] : ''}
                         onChange={(e) => {
-                          const newDate = e.target.value ? new Date(e.target.value).toISOString() : new Date().toISOString();
                           setEditingItem({
                             ...editingItem,
                             metadata: {
                               ...editingItem.metadata,
-                              uploadedAt: newDate,
+                              uploadedAt: e.target.value ? new Date(e.target.value).toISOString() : undefined,
                             }
                           });
                         }}
