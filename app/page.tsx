@@ -1,15 +1,140 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useRef, Suspense, useLayoutEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef, Suspense, useLayoutEffect, useCallback } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, Stage, useGLTF, Html, Center } from '@react-three/drei';
 import * as THREE from 'three';
-import { 
-  Loader2, 
-  X, 
-  Box, 
+import {
+  Loader2,
+  X,
+  Box,
   Maximize2,
 } from 'lucide-react';
+
+// --- LANGUAGE & TRANSLATIONS ---
+type Language = 'NO' | 'EN';
+
+interface Translations {
+  about: string;
+  loadingAssets: string;
+  noObjectsFound: string;
+  resetFilters: string;
+  all: string;
+  added: string;
+  type: string;
+  glbAsset: string;
+  hostedAt: string;
+  loading: string;
+  aboutTitle: string;
+  aboutP1: string;
+  aboutP2: string;
+  aboutP3: string;
+  curatedDescription: string;
+}
+
+const translations: Record<Language, Translations> = {
+  EN: {
+    about: 'About',
+    loadingAssets: 'Loading Assets',
+    noObjectsFound: 'No objects found',
+    resetFilters: 'Reset Filters',
+    all: 'All',
+    added: 'Added',
+    type: 'Type',
+    glbAsset: 'GLB Asset',
+    hostedAt: 'Hosted At',
+    loading: 'Loading...',
+    aboutTitle: 'Katalog',
+    aboutP1: ' is a digital collector, ordering, categorizing, and exhibiting things. This collection represents a search for aesthetic emotion in the assemblage of everyday objects.',
+    aboutP2: 'I would like to keep things as they are, but the digital landscape is ever-changing. By scanning and archiving these items, we push the limits of inertia.',
+    aboutP3: 'Longing for stability in my life, I felt the urge to really lock myself into my new place. I decided then and there to digitize everything, getting up close and personal with my belongings and analyzing all of them in detail.',
+    curatedDescription: 'A curated 3D object from the collection.',
+  },
+  NO: {
+    about: 'Om',
+    loadingAssets: 'Laster inn',
+    noObjectsFound: 'Ingen objekter funnet',
+    resetFilters: 'Tilbakestill filter',
+    all: 'Alle',
+    added: 'Lagt til',
+    type: 'Type',
+    glbAsset: 'GLB-fil',
+    hostedAt: 'Hostet på',
+    loading: 'Laster...',
+    aboutTitle: 'Katalog',
+    aboutP1: ' er en digital samler som ordner, kategoriserer og stiller ut ting. Denne samlingen representerer et søk etter estetisk følelse i sammensetningen av hverdagslige gjenstander.',
+    aboutP2: 'Jeg ønsker å bevare tingene slik de er, men det digitale landskapet er i stadig endring. Ved å skanne og arkivere disse gjenstandene utfordrer vi grensene for treghet.',
+    aboutP3: 'Med et ønske om stabilitet i livet mitt, følte jeg trangen til å virkelig forankre meg i mitt nye hjem. Jeg bestemte meg der og da for å digitalisere alt, bli godt kjent med eiendelene mine og analysere dem i detalj.',
+    curatedDescription: 'Et kuratert 3D-objekt fra samlingen.',
+  },
+};
+
+// --- THUMBNAIL CACHE ---
+const THUMBNAIL_CACHE_KEY = 'katalog_thumbnails_v2';
+const THUMBNAIL_CACHE_EXPIRY = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+interface ThumbnailCacheEntry {
+  low: string;    // ~10% quality, very small
+  medium: string; // ~30% quality
+  high: string;   // ~70% quality
+  timestamp: number;
+}
+
+interface ThumbnailCache {
+  [itemId: string]: ThumbnailCacheEntry;
+}
+
+const getThumbnailCache = (): ThumbnailCache => {
+  if (typeof window === 'undefined') return {};
+  try {
+    const cached = localStorage.getItem(THUMBNAIL_CACHE_KEY);
+    if (!cached) return {};
+    const parsed = JSON.parse(cached) as ThumbnailCache;
+    const now = Date.now();
+    const valid: ThumbnailCache = {};
+    for (const [key, entry] of Object.entries(parsed)) {
+      if (now - entry.timestamp < THUMBNAIL_CACHE_EXPIRY) {
+        valid[key] = entry;
+      }
+    }
+    return valid;
+  } catch {
+    return {};
+  }
+};
+
+const setThumbnailCache = (cache: ThumbnailCache) => {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(THUMBNAIL_CACHE_KEY, JSON.stringify(cache));
+  } catch {
+    // Storage quota exceeded, clear old entries
+    try {
+      localStorage.removeItem(THUMBNAIL_CACHE_KEY);
+    } catch { /* ignore */ }
+  }
+};
+
+const resizeImage = (dataUrl: string, quality: number, maxSize: number): Promise<string> => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const scale = Math.min(1, maxSize / Math.max(img.width, img.height));
+      canvas.width = img.width * scale;
+      canvas.height = img.height * scale;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/webp', quality));
+      } else {
+        resolve(dataUrl);
+      }
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+};
 
 // --- TYPES ---
 export interface MaterialInfo {
@@ -29,6 +154,12 @@ export interface CatalogMetadata {
   uploadedAt?: string;
 }
 
+export interface ThumbnailSet {
+  low: string;    // Blur placeholder
+  medium: string; // Medium quality
+  high: string;   // Full quality
+}
+
 export interface CatalogItem {
   id: number;
   name: string;
@@ -36,7 +167,8 @@ export interface CatalogItem {
   type: string;
   category: string;
   tags: string[];
-  thumbnail?: string; // Base64 data URL
+  thumbnail?: string; // Legacy single thumbnail or external URL
+  thumbnails?: ThumbnailSet; // Multi-resolution cached thumbnails
   size?: number; // Size in bytes
   metadata: CatalogMetadata;
 }
@@ -55,8 +187,9 @@ interface Viewer3DProps {
   metadata?: CatalogMetadata;
   showInfo?: boolean;
   className?: string;
-  onCapture?: (url: string) => void;
+  onCapture?: (thumbnails: MultiResThumbnails) => void;
   autoRotate?: boolean;
+  loadingText?: string;
 }
 
 function Model({ url, metadata }: { url: string; metadata?: CatalogMetadata }) {
@@ -91,18 +224,32 @@ function Model({ url, metadata }: { url: string; metadata?: CatalogMetadata }) {
   return <primitive object={clone} ref={ref} />;
 }
 
-function CaptureHelper({ onCapture }: { onCapture: (url: string) => void }) {
+interface MultiResThumbnails {
+  low: string;
+  medium: string;
+  high: string;
+}
+
+function CaptureHelper({ onCapture }: { onCapture: (thumbnails: MultiResThumbnails) => void }) {
   const { gl, scene, camera } = useThree();
-  
+
   useEffect(() => {
-    const timer = setTimeout(() => {
-        gl.render(scene, camera);
-        const data = gl.domElement.toDataURL('image/webp', 0.5);
-        onCapture(data);
+    const timer = setTimeout(async () => {
+      gl.render(scene, camera);
+      const fullRes = gl.domElement.toDataURL('image/webp', 0.9);
+
+      // Generate 3 resolutions
+      const [low, medium, high] = await Promise.all([
+        resizeImage(fullRes, 0.1, 32),   // Tiny blur placeholder
+        resizeImage(fullRes, 0.4, 128),  // Medium quality
+        resizeImage(fullRes, 0.8, 256),  // High quality
+      ]);
+
+      onCapture({ low, medium, high });
     }, 500);
     return () => clearTimeout(timer);
   }, [gl, scene, camera, onCapture]);
-  
+
   return null;
 }
 
@@ -117,8 +264,8 @@ class ErrorBoundary extends React.Component<{ fallback: React.ReactNode; childre
   }
 }
 
-function ViewerLoader() {
-  return <Html center><div className="text-xs font-mono text-gray-400 bg-white/80 px-2 py-1 rounded-full backdrop-blur-md border border-white/20">Loading...</div></Html>;
+function ViewerLoader({ text = 'Loading...' }: { text?: string }) {
+  return <Html center><div className="text-xs font-mono text-gray-400 bg-white/80 px-2 py-1 rounded-full backdrop-blur-md border border-white/20">{text}</div></Html>;
 }
 
 function FallbackMesh({ color }: { color?: string }) {
@@ -130,20 +277,21 @@ function FallbackMesh({ color }: { color?: string }) {
     );
 }
 
-const Viewer3D: React.FC<Viewer3DProps> = ({ 
-    url, 
-    color, 
-    metadata, 
-    showInfo = true, 
+const Viewer3D: React.FC<Viewer3DProps> = ({
+    url,
+    color,
+    metadata,
+    showInfo = true,
     className = "bg-gray-50 rounded-lg",
-    onCapture, 
-    autoRotate = true
+    onCapture,
+    autoRotate = true,
+    loadingText = 'Loading...',
 }) => {
   return (
     <div className={`w-full h-full overflow-hidden relative ${className}`}>
-      <Canvas 
+      <Canvas
         shadows={false}
-        dpr={[1, 2]} 
+        dpr={[1, 2]}
         // FOV 12 approx 200mm lens effect for orthographic look
         camera={{ position: [0, 0, 35], fov: 12 }}
         gl={{ preserveDrawingBuffer: !!onCapture, alpha: true }}
@@ -155,7 +303,7 @@ const Viewer3D: React.FC<Viewer3DProps> = ({
                 </Center>
              </Stage>
         }>
-            <Suspense fallback={<ViewerLoader />}>
+            <Suspense fallback={<ViewerLoader text={loadingText} />}>
                 <Stage environment="city" intensity={0.6} adjustCamera={1.2} shadows={false}>
                     <Center>
                         <Model url={url} metadata={metadata} />
@@ -182,9 +330,10 @@ const Viewer3D: React.FC<Viewer3DProps> = ({
 interface DetailModalProps {
   item: CatalogItem;
   onClose: () => void;
+  t: Translations;
 }
 
-const DetailModal: React.FC<DetailModalProps> = ({ item, onClose }) => {
+const DetailModal: React.FC<DetailModalProps> = ({ item, onClose, t }) => {
   useEffect(() => {
     document.body.style.overflow = 'hidden';
     return () => {
@@ -226,20 +375,20 @@ const DetailModal: React.FC<DetailModalProps> = ({ item, onClose }) => {
                             </span>
                             <h2 className="text-3xl font-serif font-medium text-gray-900 leading-none mb-4 tracking-tight">{item.name}</h2>
                             <p className="text-sm text-gray-500 leading-relaxed font-light">
-                                {item.metadata.description || "A curated 3D object from the collection."}
+                                {item.metadata.description || t.curatedDescription}
                             </p>
                         </div>
 
                         <div className="grid grid-cols-2 gap-6 pt-6 border-t border-gray-50">
                              <div>
-                                <span className="block text-[10px] font-bold uppercase tracking-wider text-gray-300 mb-1">Added</span>
+                                <span className="block text-[10px] font-bold uppercase tracking-wider text-gray-300 mb-1">{t.added}</span>
                                 <span className="font-mono text-xs text-gray-600">
                                     {item.metadata.uploadedAt ? new Date(item.metadata.uploadedAt).toLocaleDateString(undefined, {month: 'long', year: 'numeric'}) : 'Unknown'}
                                 </span>
                              </div>
                              <div>
-                                <span className="block text-[10px] font-bold uppercase tracking-wider text-gray-300 mb-1">Type</span>
-                                <span className="font-mono text-xs text-gray-600">GLB Asset</span>
+                                <span className="block text-[10px] font-bold uppercase tracking-wider text-gray-300 mb-1">{t.type}</span>
+                                <span className="font-mono text-xs text-gray-600">{t.glbAsset}</span>
                              </div>
                         </div>
                     </div>
@@ -251,43 +400,29 @@ const DetailModal: React.FC<DetailModalProps> = ({ item, onClose }) => {
   );
 };
 
-// 3. AboutModal
-const AboutModal = ({ onClose }: { onClose: () => void }) => {
-    useEffect(() => {
-        document.body.style.overflow = 'hidden';
-        return () => { document.body.style.overflow = 'unset'; };
-    }, []);
-
+// 3. AboutSection (inline, replaces grid)
+const AboutSection = ({ t }: { t: Translations }) => {
     return (
-        <div className="fixed inset-0 z-[70] bg-[#fafafa] overflow-y-auto animate-in fade-in duration-300">
-            <button onClick={onClose} className="fixed top-6 right-6 z-20 w-10 h-10 flex items-center justify-center hover:bg-gray-100 rounded-full transition-colors">
-                <X className="w-6 h-6 text-black" strokeWidth={1.5} />
-            </button>
-            
-            <div className="min-h-full flex flex-col items-center justify-center p-6 md:p-12">
-                <div className="max-w-4xl w-full">
-                    <h1 className="text-6xl md:text-8xl font-serif mb-16 text-center tracking-tight">Katalog</h1>
-                    
-                    <div className="grid md:grid-cols-2 gap-12 md:gap-24 text-sm md:text-base leading-relaxed text-gray-600 font-light">
-                        <div className="space-y-6">
-                            <p>
-                                <span className="text-black font-medium">Iver Finne</span> is a digital collector, ordering, categorizing, and exhibiting things. 
-                                This collection represents a search for aesthetic emotion in the assemblage of everyday objects.
-                            </p>
-                            <p>
-                                I'd like to keep things as they are, but the digital landscape is ever-changing. 
-                                By scanning and archiving these items, we push the limits of inertia.
-                            </p>
-                        </div>
-                        <div className="space-y-6">
-                            <p>
-                                Longing for stability in my life, I felt the urge to really lock myself into my new place. 
-                                I decided then and there to digitize everything, getting up close and personal with my belongings and analyzing all of them in detail.
-                            </p>
-                            <div className="pt-8 border-t border-gray-200">
-                                <p className="text-xs text-gray-400 uppercase tracking-widest mb-2">Hosted At</p>
-                                <a href="https://katalog.iverfinne.no" className="text-black font-mono hover:underline">katalog.iverfinne.no</a>
-                            </div>
+        <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 py-12 md:py-24">
+            <div className="max-w-4xl mx-auto">
+                <h1 className="text-5xl md:text-7xl font-serif mb-12 md:mb-16 tracking-tight">{t.aboutTitle}</h1>
+
+                <div className="grid md:grid-cols-2 gap-10 md:gap-20 text-sm md:text-base leading-relaxed text-gray-600 font-light">
+                    <div className="space-y-6">
+                        <p>
+                            <span className="text-black font-medium">Iver Finne</span>{t.aboutP1}
+                        </p>
+                        <p>
+                            {t.aboutP2}
+                        </p>
+                    </div>
+                    <div className="space-y-6">
+                        <p>
+                            {t.aboutP3}
+                        </p>
+                        <div className="pt-8 border-t border-gray-200">
+                            <p className="text-xs text-gray-400 uppercase tracking-widest mb-2">{t.hostedAt}</p>
+                            <a href="https://katalog.iverfinne.no" className="text-black font-mono hover:underline">katalog.iverfinne.no</a>
                         </div>
                     </div>
                 </div>
@@ -296,7 +431,7 @@ const AboutModal = ({ onClose }: { onClose: () => void }) => {
     );
 };
 
-// 4. GridItem
+// 4. GridItem with Progressive Loading
 const generationQueue: (() => void)[] = [];
 let activeGenerators = 0;
 const MAX_CONCURRENT_GENERATORS = 2;
@@ -310,10 +445,75 @@ const processQueue = () => {
   }
 };
 
+// Progressive Image Component
+const ProgressiveImage: React.FC<{
+  thumbnails?: ThumbnailSet;
+  fallbackUrl?: string;
+  alt: string;
+}> = ({ thumbnails, fallbackUrl, alt }) => {
+  const [loadedLevel, setLoadedLevel] = useState<'none' | 'low' | 'medium' | 'high'>('none');
+
+  useEffect(() => {
+    if (!thumbnails) {
+      if (fallbackUrl) setLoadedLevel('high');
+      return;
+    }
+
+    // Start with low immediately
+    setLoadedLevel('low');
+
+    // Load medium
+    const mediumImg = new Image();
+    mediumImg.onload = () => setLoadedLevel('medium');
+    mediumImg.src = thumbnails.medium;
+
+    // Load high
+    const highImg = new Image();
+    highImg.onload = () => setLoadedLevel('high');
+    highImg.src = thumbnails.high;
+  }, [thumbnails, fallbackUrl]);
+
+  const getCurrentSrc = () => {
+    if (!thumbnails) return fallbackUrl;
+    switch (loadedLevel) {
+      case 'high': return thumbnails.high;
+      case 'medium': return thumbnails.medium;
+      case 'low': return thumbnails.low;
+      default: return thumbnails.low;
+    }
+  };
+
+  const src = getCurrentSrc();
+  if (!src) return null;
+
+  return (
+    <div className="w-full h-full relative">
+      {/* Blur placeholder layer */}
+      {thumbnails && loadedLevel !== 'high' && (
+        <img
+          src={thumbnails.low}
+          alt=""
+          className="absolute inset-0 w-full h-full object-cover blur-sm scale-110"
+          aria-hidden="true"
+        />
+      )}
+      {/* Main image */}
+      <img
+        src={src}
+        alt={alt}
+        className={`w-full h-full object-cover transition-all duration-500 group-hover:scale-105 ease-out ${
+          loadedLevel === 'low' ? 'blur-sm scale-110' : ''
+        }`}
+        loading="lazy"
+      />
+    </div>
+  );
+};
+
 interface GridItemProps {
   item: CatalogItem;
   onClick: (item: CatalogItem) => void;
-  onThumbnailGenerated?: (id: number, url: string) => void;
+  onThumbnailGenerated?: (id: number, thumbnails: MultiResThumbnails) => void;
 }
 
 const GridItem: React.FC<GridItemProps> = ({ item, onClick, onThumbnailGenerated }) => {
@@ -321,79 +521,80 @@ const GridItem: React.FC<GridItemProps> = ({ item, onClick, onThumbnailGenerated
   const [showPreview, setShowPreview] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
 
+  const hasThumbnail = item.thumbnails || item.thumbnail;
+
   useEffect(() => {
     let timeout: ReturnType<typeof setTimeout>;
     const isTouch = 'ontouchstart' in window;
-    
-    if (isHovered && !item.thumbnail && !isGenerating && !isTouch) {
-        timeout = setTimeout(() => setShowPreview(true), 600);
+
+    if (isHovered && !hasThumbnail && !isGenerating && !isTouch) {
+      timeout = setTimeout(() => setShowPreview(true), 600);
     } else {
-        setShowPreview(false);
+      setShowPreview(false);
     }
     return () => clearTimeout(timeout);
-  }, [isHovered, item.thumbnail, isGenerating]);
+  }, [isHovered, hasThumbnail, isGenerating]);
 
   useEffect(() => {
-    if (!item.thumbnail && !isGenerating && onThumbnailGenerated) {
-        const task = () => setIsGenerating(true);
-        generationQueue.push(task);
-        processQueue();
-        return () => {
-             const idx = generationQueue.indexOf(task);
-             if (idx > -1) generationQueue.splice(idx, 1);
-        };
-    }
-  }, [item.thumbnail, onThumbnailGenerated, isGenerating]);
-
-  const handleCapture = (url: string) => {
-      activeGenerators--;
+    if (!hasThumbnail && !isGenerating && onThumbnailGenerated) {
+      const task = () => setIsGenerating(true);
+      generationQueue.push(task);
       processQueue();
-      setIsGenerating(false);
-      if (onThumbnailGenerated) onThumbnailGenerated(item.id, url);
-  };
+      return () => {
+        const idx = generationQueue.indexOf(task);
+        if (idx > -1) generationQueue.splice(idx, 1);
+      };
+    }
+  }, [hasThumbnail, onThumbnailGenerated, isGenerating]);
+
+  const handleCapture = useCallback((thumbnails: MultiResThumbnails) => {
+    activeGenerators--;
+    processQueue();
+    setIsGenerating(false);
+    if (onThumbnailGenerated) onThumbnailGenerated(item.id, thumbnails);
+  }, [item.id, onThumbnailGenerated]);
 
   return (
-    <div 
+    <div
       onClick={() => onClick(item)}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       className="group relative w-full aspect-square bg-white rounded-xl overflow-hidden cursor-pointer transition-all duration-300"
     >
       <div className="w-full h-full bg-[#fcfcfc] flex items-center justify-center overflow-hidden relative">
-          {item.thumbnail ? (
-            <img 
-              src={item.thumbnail} 
-              alt={item.name} 
-              className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105 ease-out"
-              loading="lazy"
-            />
-          ) : (
-            <>
-                {isGenerating && (
-                    <div className="absolute inset-0 z-0 opacity-0 pointer-events-none">
-                        <Viewer3D url={item.url} metadata={item.metadata} showInfo={false} onCapture={handleCapture} autoRotate={false} />
-                    </div>
-                )}
-                {showPreview && !isGenerating ? (
-                    <div className="absolute inset-0 z-10 animate-in fade-in duration-500 bg-[#fcfcfc]">
-                        <Viewer3D url={item.url} metadata={item.metadata} showInfo={false} className="bg-[#fcfcfc]" />
-                    </div>
+        {hasThumbnail ? (
+          <ProgressiveImage
+            thumbnails={item.thumbnails}
+            fallbackUrl={item.thumbnail}
+            alt={item.name}
+          />
+        ) : (
+          <>
+            {isGenerating && (
+              <div className="absolute inset-0 z-0 opacity-0 pointer-events-none">
+                <Viewer3D url={item.url} metadata={item.metadata} showInfo={false} onCapture={handleCapture} autoRotate={false} />
+              </div>
+            )}
+            {showPreview && !isGenerating ? (
+              <div className="absolute inset-0 z-10 animate-in fade-in duration-500 bg-[#fcfcfc]">
+                <Viewer3D url={item.url} metadata={item.metadata} showInfo={false} className="bg-[#fcfcfc]" />
+              </div>
+            ) : (
+              <div className="text-gray-300 flex flex-col items-center justify-center p-2 transition-opacity duration-200 group-hover:opacity-50">
+                {isGenerating ? (
+                  <Loader2 className="w-6 h-6 opacity-30 animate-spin text-gray-500" />
                 ) : (
-                    <div className="text-gray-300 flex flex-col items-center justify-center p-2 transition-opacity duration-200 group-hover:opacity-50">
-                       {isGenerating ? (
-                           <Loader2 className="w-6 h-6 opacity-30 animate-spin text-gray-500" />
-                       ) : (
-                           <Box className="w-8 h-8 opacity-20" strokeWidth={1.5} />
-                       )}
-                    </div>
+                  <Box className="w-8 h-8 opacity-20" strokeWidth={1.5} />
                 )}
-            </>
-          )}
+              </div>
+            )}
+          </>
+        )}
       </div>
 
       <div className="absolute bottom-3 left-0 right-0 text-center opacity-0 group-hover:opacity-100 transition-opacity duration-300">
         <span className="inline-block bg-white/90 backdrop-blur-sm px-2 py-1 rounded text-black text-[10px] font-medium tracking-wide shadow-sm border border-black/5">
-            {item.name}
+          {item.name}
         </span>
       </div>
     </div>
@@ -458,81 +659,107 @@ export default function Page() {
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [loading, setLoading] = useState(true);
   const [showAbout, setShowAbout] = useState(false);
+  const [language, setLanguage] = useState<Language>('EN');
+  const thumbnailCacheRef = useRef<ThumbnailCache>({});
+
+  const t = translations[language];
+
+  // Load cached thumbnails on mount
+  useEffect(() => {
+    thumbnailCacheRef.current = getThumbnailCache();
+  }, []);
 
   const getNameFromPath = (path: string) => {
-      const parts = path.split('/');
-      const file = parts[parts.length - 1];
-      return file.replace('.glb', '').replace('.png', '').replace('.jpg', '').replace(/-[\d]+$/, '').replace(/-/g, ' ');
+    const parts = path.split('/');
+    const file = parts[parts.length - 1];
+    return file.replace('.glb', '').replace('.png', '').replace('.jpg', '').replace(/-[\d]+$/, '').replace(/-/g, ' ');
   };
 
   const getCategoryFromPath = (path: string) => {
-      const parts = path.split('/');
-      if (parts.length > 2) return parts.slice(1, parts.length - 1).join('/'); 
-      return 'uncategorized';
+    const parts = path.split('/');
+    if (parts.length > 2) return parts.slice(1, parts.length - 1).join('/');
+    return 'uncategorized';
   };
 
   useEffect(() => {
     const fetchData = async () => {
-        setLoading(true);
-        try {
-            const response = await fetch('https://blob.vercel-storage.com?mode=expanded', {
-                method: 'GET',
-                headers: { 'authorization': `Bearer ${BLOB_READ_WRITE_TOKEN}` },
-                cache: 'no-store'
-            });
+      setLoading(true);
+      try {
+        const response = await fetch('https://blob.vercel-storage.com?mode=expanded', {
+          method: 'GET',
+          headers: { 'authorization': `Bearer ${BLOB_READ_WRITE_TOKEN}` },
+          cache: 'no-store'
+        });
 
-            if (response.ok) {
-                const data = await response.json();
-                const blobs: BlobObject[] = data.blobs || [];
-                const glbFiles = blobs.filter(b => b.pathname.endsWith('.glb'));
-                const imageFiles = blobs.filter(b => b.pathname.match(/\.(jpg|jpeg|png|webp)$/i));
+        if (response.ok) {
+          const data = await response.json();
+          const blobs: BlobObject[] = data.blobs || [];
+          const glbFiles = blobs.filter(b => b.pathname.endsWith('.glb'));
+          const imageFiles = blobs.filter(b => b.pathname.match(/\.(jpg|jpeg|png|webp)$/i));
 
-                if (glbFiles.length > 0) {
-                    const catalogItems: CatalogItem[] = glbFiles.map((file, index) => {
-                        const name = getNameFromPath(file.pathname);
-                        const category = getCategoryFromPath(file.pathname);
-                        const id = new Date(file.uploadedAt).getTime() + index;
-                        const baseName = file.pathname.substring(0, file.pathname.lastIndexOf('.'));
-                        const thumbnailBlob = imageFiles.find(img => img.pathname.startsWith(baseName));
+          if (glbFiles.length > 0) {
+            const cache = thumbnailCacheRef.current;
+            const catalogItems: CatalogItem[] = glbFiles.map((file, index) => {
+              const name = getNameFromPath(file.pathname);
+              const category = getCategoryFromPath(file.pathname);
+              const id = new Date(file.uploadedAt).getTime() + index;
+              const baseName = file.pathname.substring(0, file.pathname.lastIndexOf('.'));
+              const thumbnailBlob = imageFiles.find(img => img.pathname.startsWith(baseName));
+              const cachedThumbnails = cache[String(id)];
 
-                        return {
-                            id,
-                            name: name.charAt(0).toUpperCase() + name.slice(1),
-                            url: file.url,
-                            type: '3d',
-                            category,
-                            tags: category.split('/'),
-                            thumbnail: thumbnailBlob ? thumbnailBlob.url : undefined,
-                            size: file.size,
-                            metadata: {
-                                uploadedAt: file.uploadedAt,
-                                description: `Imported from ${file.pathname}`,
-                                colors: [],
-                                materials: []
-                            }
-                        };
-                    });
-                    setItems(catalogItems);
-                } else {
-                    setItems(DEMO_ITEMS);
+              return {
+                id,
+                name: name.charAt(0).toUpperCase() + name.slice(1),
+                url: file.url,
+                type: '3d',
+                category,
+                tags: category.split('/'),
+                thumbnail: thumbnailBlob ? thumbnailBlob.url : undefined,
+                thumbnails: cachedThumbnails ? {
+                  low: cachedThumbnails.low,
+                  medium: cachedThumbnails.medium,
+                  high: cachedThumbnails.high,
+                } : undefined,
+                size: file.size,
+                metadata: {
+                  uploadedAt: file.uploadedAt,
+                  description: `Imported from ${file.pathname}`,
+                  colors: [],
+                  materials: []
                 }
-            } else {
-                throw new Error(`API returned ${response.status}`);
-            }
-        } catch (e: unknown) {
-            console.warn("Using demo data.", e);
+              };
+            });
+            setItems(catalogItems);
+          } else {
             setItems(DEMO_ITEMS);
-        } finally {
-            setLoading(false);
+          }
+        } else {
+          throw new Error(`API returned ${response.status}`);
         }
+      } catch (e: unknown) {
+        console.warn("Using demo data.", e);
+        setItems(DEMO_ITEMS);
+      } finally {
+        setLoading(false);
+      }
     };
-    
+
     fetchData();
   }, []);
 
-  const handleThumbnailGenerated = (id: number, url: string) => {
-    setItems(prev => prev.map(item => item.id === id ? { ...item, thumbnail: url } : item));
-  };
+  const handleThumbnailGenerated = useCallback((id: number, thumbnails: MultiResThumbnails) => {
+    // Update items with new thumbnails
+    setItems(prev => prev.map(item =>
+      item.id === id ? { ...item, thumbnails } : item
+    ));
+
+    // Save to cache
+    thumbnailCacheRef.current[String(id)] = {
+      ...thumbnails,
+      timestamp: Date.now(),
+    };
+    setThumbnailCache(thumbnailCacheRef.current);
+  }, []);
 
   const filteredItems = useMemo(() => {
     let filtered = [...items];
@@ -565,47 +792,62 @@ export default function Page() {
                  <h1 className="font-serif text-xl font-medium tracking-tight">Katalog</h1>
              </div>
 
-             <div className="flex items-center gap-4">
-                 <button onClick={() => setShowAbout(true)} className="text-xs font-medium text-gray-500 hover:text-black transition-colors">About</button>
+             <div className="flex items-center gap-3">
+                 <button
+                   onClick={() => setLanguage(l => l === 'EN' ? 'NO' : 'EN')}
+                   className="text-xs font-bold text-gray-400 hover:text-black transition-colors tracking-wider"
+                 >
+                   {language === 'EN' ? 'NO' : 'EN'}
+                 </button>
+                 <button
+                   onClick={() => setShowAbout(prev => !prev)}
+                   className={`text-xs font-medium transition-colors ${showAbout ? 'text-black' : 'text-gray-500 hover:text-black'}`}
+                 >
+                   {t.about}
+                 </button>
                  <div className="h-3 w-px bg-gray-200"></div>
                  <button onClick={cycleGridSize} className="hidden sm:flex items-center justify-center w-8 h-8 rounded-full hover:bg-gray-100 transition-colors">
-                    <Maximize2 size={16} className="text-gray-400 hover:text-black transition-colors"/>
+                   <Maximize2 size={16} className="text-gray-400 hover:text-black transition-colors"/>
                  </button>
              </div>
           </div>
           
-          <div className="flex items-center gap-1 overflow-x-auto no-scrollbar pb-1 -ml-2">
-            {categories.map((cat) => (
-              <button
-                key={cat}
-                onClick={() => setSelectedCategory(cat)}
-                className={`
-                    px-3 py-1 text-[11px] font-medium transition-all duration-300 whitespace-nowrap bg-transparent rounded-full
-                    ${selectedCategory === cat 
-                        ? 'text-black opacity-100' 
-                        : 'text-gray-400 opacity-60 hover:opacity-100 hover:text-gray-800'}
-                `}
-              >
-                {cat === 'all' ? 'All' : cat.split('/').pop()}
-              </button>
-            ))}
-          </div>
+          {!showAbout && (
+            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar pb-1 -ml-2">
+              {categories.map((cat) => (
+                <button
+                  key={cat}
+                  onClick={() => setSelectedCategory(cat)}
+                  className={`
+                      px-3 py-1 text-[11px] font-medium transition-all duration-300 whitespace-nowrap bg-transparent rounded-full
+                      ${selectedCategory === cat
+                          ? 'text-black opacity-100'
+                          : 'text-gray-400 opacity-60 hover:opacity-100 hover:text-gray-800'}
+                  `}
+                >
+                  {cat === 'all' ? t.all : cat.split('/').pop()}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </header>
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 pb-12">
-        {loading ? (
-             <div className="flex flex-col items-center justify-center py-32 text-gray-300">
-                <Loader2 className="w-8 h-8 animate-spin mb-4 text-black/10"/>
-                <p className="text-xs font-medium uppercase tracking-widest opacity-50">Loading Assets</p>
-             </div>
+        {showAbout ? (
+          <AboutSection t={t} />
+        ) : loading ? (
+          <div className="flex flex-col items-center justify-center py-32 text-gray-300">
+            <Loader2 className="w-8 h-8 animate-spin mb-4 text-black/10"/>
+            <p className="text-xs font-medium uppercase tracking-widest opacity-50">{t.loadingAssets}</p>
+          </div>
         ) : filteredItems.length === 0 ? (
-           <div className="flex flex-col items-center justify-center py-32 text-gray-300">
-              <Box className="w-12 h-12 mb-4 opacity-20"/>
-              <p className="text-sm font-medium text-gray-400">No objects found</p>
-              <button onClick={() => setSelectedCategory('all')} className="mt-4 text-xs font-semibold text-black border-b border-black pb-0.5 hover:opacity-70 transition-opacity">Reset Filters</button>
-           </div>
+          <div className="flex flex-col items-center justify-center py-32 text-gray-300">
+            <Box className="w-12 h-12 mb-4 opacity-20"/>
+            <p className="text-sm font-medium text-gray-400">{t.noObjectsFound}</p>
+            <button onClick={() => setSelectedCategory('all')} className="mt-4 text-xs font-semibold text-black border-b border-black pb-0.5 hover:opacity-70 transition-opacity">{t.resetFilters}</button>
+          </div>
         ) : (
           <div style={{ display: 'grid', ...gridStyles[gridSize] }} className="w-full animate-in fade-in slide-in-from-bottom-4 duration-500">
             {filteredItems.map((item) => (
@@ -614,9 +856,8 @@ export default function Page() {
           </div>
         )}
       </main>
-      
-      {selectedItem && <DetailModal item={selectedItem} onClose={() => setSelectedItem(null)} />}
-      {showAbout && <AboutModal onClose={() => setShowAbout(false)} />}
+
+      {selectedItem && <DetailModal item={selectedItem} onClose={() => setSelectedItem(null)} t={t} />}
     </div>
   );
 }
