@@ -13,6 +13,69 @@ Upload portal for 3D models (GLB/GLTF) with AI-powered material analysis using G
 - 🎨 Automatic material extraction from GLB
 - 🏷️ Smart tagging system
 - ☁️ Direct upload to Vercel Blob Storage
+- 🖼️ Transparent PNG thumbnail capture with auto-crop
+- 📦 Bulk processing with AI analysis
+
+## Data Structure for Frontend Viewer
+
+### Catalog Item Schema
+
+Items are stored in `localStorage` under key `katalog-config`:
+
+```typescript
+interface CatalogItem {
+  id: number;                    // Unique timestamp-based ID
+  name: string;                  // Display name
+  url: string;                   // Vercel Blob URL to GLB file
+  type: string;                  // Always "3d"
+  category: string;              // Category path (e.g., "furniture/chairs")
+  tags: string[];                // Array of lowercase tags
+  thumbnail?: string;            // Base64 data URL (PNG with transparency)
+  metadata: {
+    materials?: MaterialInfo[];  // Extracted material data
+    colors?: string[];           // Hex color codes from model
+    targetHeight?: number | null; // Target height in mm
+    scaleFactor?: number | null;  // Scale multiplier for real-world size
+    description?: string;         // AI-generated description
+    uploadedAt?: string;          // ISO 8601 timestamp
+  };
+}
+
+interface MaterialInfo {
+  name: string;      // Material name
+  type: string;      // Material type (e.g., "MeshStandard")
+  color: string;     // Hex color (e.g., "#ff0000")
+  metalness: number; // 0-1
+  roughness: number; // 0-1
+}
+```
+
+### File Paths
+
+| Type | Path Pattern | Example |
+|------|--------------|---------|
+| GLB Model | `{category}/{safename}-{timestamp}.glb` | `furniture/chairs/office-chair-1704067200000.glb` |
+| Thumbnail | Embedded as base64 data URL | `data:image/png;base64,...` |
+
+### URL Structure
+
+- **Blob Storage:** `https://*.public.blob.vercel-storage.com/{category}/{filename}.glb`
+- **Thumbnails:** Stored inline as base64 PNG with transparent background
+
+### Reading Catalog Data
+
+```javascript
+const catalog = JSON.parse(localStorage.getItem('katalog-config') || '{"items":[]}');
+const items = catalog.items; // Array of CatalogItem
+```
+
+### Scaling Logic
+
+When `targetHeight` (mm) is set:
+```javascript
+// scaleFactor = targetHeight / originalModelHeight
+// Apply to model: model.scale.setScalar(scaleFactor)
+```
 
 ## Folder Structure
 
