@@ -1907,6 +1907,11 @@ export default function UploadPortal() {
                   <div className="p-3">
                     <h3 className="font-medium text-sm truncate">{item.name}</h3>
                     <p className="text-xs text-neutral-500 mt-1">{item.category}</p>
+                    {item.metadata?.uploadedAt && (
+                      <p className="text-[10px] text-neutral-600 mt-0.5">
+                        {new Date(item.metadata.uploadedAt).toLocaleDateString()}
+                      </p>
+                    )}
                     {item.tags.length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-2">
                         {item.tags.slice(0, 3).map((tag, i) => (
@@ -2136,6 +2141,26 @@ export default function UploadPortal() {
                         <p className="text-xs text-blue-300">{editingItem.metadata.description}</p>
                       </div>
                     )}
+                    
+                    {/* Date field */}
+                    <div className="bg-neutral-800 rounded-lg p-3">
+                      <div className="text-xs text-neutral-400 mb-2">Date</div>
+                      <input
+                        type="date"
+                        value={editingItem.metadata?.uploadedAt ? new Date(editingItem.metadata.uploadedAt).toISOString().split('T')[0] : ''}
+                        onChange={(e) => {
+                          const newDate = e.target.value ? new Date(e.target.value).toISOString() : new Date().toISOString();
+                          setEditingItem({
+                            ...editingItem,
+                            metadata: {
+                              ...editingItem.metadata,
+                              uploadedAt: newDate,
+                            }
+                          });
+                        }}
+                        className="w-full px-3 py-2 bg-black border border-neutral-700 rounded text-sm focus:outline-none focus:border-neutral-500"
+                      />
+                    </div>
                     
                     <div className="text-xs text-neutral-500">
                       <p>URL: <span className="font-mono text-neutral-400 break-all">{editingItem.url}</span></p>
