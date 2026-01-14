@@ -136,7 +136,7 @@ const Viewer3D: React.FC<Viewer3DProps> = ({
     metadata, 
     showInfo = true, 
     className = "bg-gray-50 rounded-lg",
-    onCapture,
+    onCapture, 
     autoRotate = true
 }) => {
   return (
@@ -193,7 +193,7 @@ const DetailModal: React.FC<DetailModalProps> = ({ item, onClose }) => {
   }, []);
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-white/90 backdrop-blur-md animate-in fade-in duration-300">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-white/95 backdrop-blur-md animate-in fade-in duration-300">
       <div className="absolute inset-0" onClick={onClose} />
       <div className="relative w-full h-full md:max-w-5xl md:h-[85vh] bg-white md:rounded-[2rem] overflow-hidden flex flex-col shadow-2xl shadow-black/5 animate-in slide-in-from-bottom-4 duration-500 border border-gray-100">
         
@@ -251,7 +251,52 @@ const DetailModal: React.FC<DetailModalProps> = ({ item, onClose }) => {
   );
 };
 
-// 3. GridItem
+// 3. AboutModal
+const AboutModal = ({ onClose }: { onClose: () => void }) => {
+    useEffect(() => {
+        document.body.style.overflow = 'hidden';
+        return () => { document.body.style.overflow = 'unset'; };
+    }, []);
+
+    return (
+        <div className="fixed inset-0 z-[70] bg-[#fafafa] overflow-y-auto animate-in fade-in duration-300">
+            <button onClick={onClose} className="fixed top-6 right-6 z-20 w-10 h-10 flex items-center justify-center hover:bg-gray-100 rounded-full transition-colors">
+                <X className="w-6 h-6 text-black" strokeWidth={1.5} />
+            </button>
+            
+            <div className="min-h-full flex flex-col items-center justify-center p-6 md:p-12">
+                <div className="max-w-4xl w-full">
+                    <h1 className="text-6xl md:text-8xl font-serif mb-16 text-center tracking-tight">Katalog</h1>
+                    
+                    <div className="grid md:grid-cols-2 gap-12 md:gap-24 text-sm md:text-base leading-relaxed text-gray-600 font-light">
+                        <div className="space-y-6">
+                            <p>
+                                <span className="text-black font-medium">Iver Finne</span> is a digital collector, ordering, categorizing, and exhibiting things. 
+                                This collection represents a search for aesthetic emotion in the assemblage of everyday objects.
+                            </p>
+                            <p>
+                                I'd like to keep things as they are, but the digital landscape is ever-changing. 
+                                By scanning and archiving these items, we push the limits of inertia.
+                            </p>
+                        </div>
+                        <div className="space-y-6">
+                            <p>
+                                Longing for stability in my life, I felt the urge to really lock myself into my new place. 
+                                I decided then and there to digitize everything, getting up close and personal with my belongings and analyzing all of them in detail.
+                            </p>
+                            <div className="pt-8 border-t border-gray-200">
+                                <p className="text-xs text-gray-400 uppercase tracking-widest mb-2">Hosted At</p>
+                                <a href="https://katalog.iverfinne.no" className="text-black font-mono hover:underline">katalog.iverfinne.no</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// 4. GridItem
 const generationQueue: (() => void)[] = [];
 let activeGenerators = 0;
 const MAX_CONCURRENT_GENERATORS = 2;
@@ -346,14 +391,16 @@ const GridItem: React.FC<GridItemProps> = ({ item, onClick, onThumbnailGenerated
           )}
       </div>
 
-      <div className="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-white/90 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex justify-center">
-        <p className="text-black text-[10px] font-medium tracking-wide truncate">{item.name}</p>
+      <div className="absolute bottom-3 left-0 right-0 text-center opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+        <span className="inline-block bg-white/90 backdrop-blur-sm px-2 py-1 rounded text-black text-[10px] font-medium tracking-wide shadow-sm border border-black/5">
+            {item.name}
+        </span>
       </div>
     </div>
   );
 };
 
-// 4. Main App Component
+// 5. Main App Component
 interface BlobObject {
     url: string;
     pathname: string;
@@ -410,6 +457,7 @@ export default function Page() {
   const [gridSize, setGridSize] = useState<GridSize>('medium');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [loading, setLoading] = useState(true);
+  const [showAbout, setShowAbout] = useState(false);
 
   const getNameFromPath = (path: string) => {
       const parts = path.split('/');
@@ -510,29 +558,32 @@ export default function Page() {
   return (
     <div className="min-h-screen bg-[#fafafa] text-[#1a1a1a] font-sans selection:bg-black selection:text-white">
       {/* Header */}
-      <header className="sticky top-0 z-40 bg-[#fafafa]/80 backdrop-blur-xl border-b border-gray-100 transition-all duration-200">
+      <header className="sticky top-0 z-40 bg-[#fafafa]/90 backdrop-blur-xl border-b border-gray-100/50 transition-all duration-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4">
-          <div className="flex items-center justify-end mb-4">
-            <div className="flex items-center gap-3">
+          <div className="flex items-center justify-between mb-4">
+             <div className="flex items-center gap-2">
+                 <h1 className="font-serif text-xl font-medium tracking-tight">Katalog</h1>
+             </div>
+
+             <div className="flex items-center gap-4">
+                 <button onClick={() => setShowAbout(true)} className="text-xs font-medium text-gray-500 hover:text-black transition-colors">About</button>
+                 <div className="h-3 w-px bg-gray-200"></div>
                  <button onClick={cycleGridSize} className="hidden sm:flex items-center justify-center w-8 h-8 rounded-full hover:bg-gray-100 transition-colors">
-                    <Maximize2 size={16} className="text-gray-600"/>
+                    <Maximize2 size={16} className="text-gray-400 hover:text-black transition-colors"/>
                  </button>
-                 <div className="text-xs font-mono text-gray-400 bg-gray-100 px-2 py-1 rounded-full">
-                    {filteredItems.length}
-                 </div>
-            </div>
+             </div>
           </div>
           
-          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
+          <div className="flex items-center gap-1 overflow-x-auto no-scrollbar pb-1 -ml-2">
             {categories.map((cat) => (
               <button
                 key={cat}
                 onClick={() => setSelectedCategory(cat)}
                 className={`
-                    px-3 py-1.5 text-xs font-medium transition-all duration-200 whitespace-nowrap bg-transparent
+                    px-3 py-1 text-[11px] font-medium transition-all duration-300 whitespace-nowrap bg-transparent rounded-full
                     ${selectedCategory === cat 
-                        ? 'text-black opacity-100 font-semibold' 
-                        : 'text-gray-500 opacity-60 hover:opacity-100 hover:text-black'}
+                        ? 'text-black opacity-100' 
+                        : 'text-gray-400 opacity-60 hover:opacity-100 hover:text-gray-800'}
                 `}
               >
                 {cat === 'all' ? 'All' : cat.split('/').pop()}
@@ -565,6 +616,7 @@ export default function Page() {
       </main>
       
       {selectedItem && <DetailModal item={selectedItem} onClose={() => setSelectedItem(null)} />}
+      {showAbout && <AboutModal onClose={() => setShowAbout(false)} />}
     </div>
   );
 }
