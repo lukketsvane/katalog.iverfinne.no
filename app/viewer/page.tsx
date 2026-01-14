@@ -25,7 +25,7 @@ const CATALOG_ITEMS: CatalogItem[] = [
 
 type GridSize = 'xs' | 'sm' | 'md' | 'lg';
 
-function ModelCard({ item, onClick }: { item: CatalogItem; onClick: () => void; gridSize: GridSize }) {
+function ModelCard({ item, onClick, index }: { item: CatalogItem; onClick: () => void; gridSize: GridSize; index: number }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -98,9 +98,9 @@ function ModelCard({ item, onClick }: { item: CatalogItem; onClick: () => void; 
       };
     };
     
-    const timer = setTimeout(loadViewer, item.id * 200);
+    const timer = setTimeout(loadViewer, Math.min(index, 10) * 200);
     return () => { clearTimeout(timer); cleanup(); };
-  }, [item.url, item.id]);
+  }, [item.url, index]);
 
   return (
     <button
@@ -197,7 +197,7 @@ export default function KatalogViewer() {
         </div>
       </header>
 
-      <div className="flex gap-1.5 px-4 py-2.5 overflow-x-auto scrollbar-hide">
+      <div className="flex gap-1.5 px-4 py-2.5 overflow-x-auto" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
         {tags.map(tag => (
           <button
             key={tag}
@@ -221,8 +221,8 @@ export default function KatalogViewer() {
           </div>
         ) : (
           <div className={`grid ${gridClasses[gridSize]}`}>
-            {filteredItems.map(item => (
-              <ModelCard key={item.id} item={item} onClick={() => setSelectedItem(item)} gridSize={gridSize} />
+            {filteredItems.map((item, index) => (
+              <ModelCard key={item.id} item={item} onClick={() => setSelectedItem(item)} gridSize={gridSize} index={index} />
             ))}
           </div>
         )}
