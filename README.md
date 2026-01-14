@@ -1,5 +1,7 @@
 # KATALOG Upload Portal
 
+**Live:** [katalog-upload.iverfinne.no](http://katalog-upload.iverfinne.no)
+
 Upload portal for 3D models (GLB/GLTF) with AI-powered material analysis using Gemini 3.
 
 ## Features

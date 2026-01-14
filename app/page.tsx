@@ -259,7 +259,7 @@ export default function UploadPortal() {
       const data = await response.json();
 
       if (data.tags) {
-        setTags((prev) => [...new Set([...prev, ...data.tags])]);
+        setTags((prev) => Array.from(new Set([...prev, ...data.tags])));
       }
       if (data.category) {
         setCategory(data.category);

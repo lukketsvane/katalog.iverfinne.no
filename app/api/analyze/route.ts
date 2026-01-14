@@ -1,4 +1,4 @@
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import { NextResponse } from 'next/server';
 
 const ai = new GoogleGenAI({
@@ -52,7 +52,7 @@ Respond ONLY with valid JSON in this exact format, no markdown:
       model: 'gemini-3-pro-preview',
       config: {
         thinkingConfig: {
-          thinkingLevel: 'HIGH',
+          thinkingLevel: ThinkingLevel.HIGH,
         },
       },
       contents: [
