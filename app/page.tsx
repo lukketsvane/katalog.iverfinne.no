@@ -28,6 +28,7 @@ interface CatalogItem {
   type: string;
   category: string;
   tags: string[];
+  thumbnail?: string;
   metadata: {
     materials?: MaterialInfo[];
     colors?: string[];
@@ -77,9 +78,11 @@ export default function UploadPortal() {
   } | null>(null);
   const [scaleFactor, setScaleFactor] = useState<number | null>(null);
   const [dragOver, setDragOver] = useState(false);
-  const [transformMode, setTransformMode] = useState<'translate' | 'rotate'>('rotate');
+  const [transformMode, setTransformMode] = useState<'translate' | 'rotate' | 'scale'>('rotate');
   const [catalogItems, setCatalogItems] = useState<CatalogItem[]>([]);
   const [editingItem, setEditingItem] = useState<CatalogItem | null>(null);
+  const [thumbnailDataUrl, setThumbnailDataUrl] = useState<string | null>(null);
+  const [manualPositionSet, setManualPositionSet] = useState(false);
   
   // Viewer controls state
   const [light1On, setLight1On] = useState(true);
@@ -87,6 +90,22 @@ export default function UploadPortal() {
   const [light3On, setLight3On] = useState(true);
   const [gridVisible, setGridVisible] = useState(true);
   const [darkMode, setDarkMode] = useState(true);
+  
+  // Light direction state (azimuth angle in degrees)
+  const [light1Angle, setLight1Angle] = useState(45);
+  const [light2Angle, setLight2Angle] = useState(225);
+  const [light3Angle, setLight3Angle] = useState(180);
+  
+  // Edit mode viewer refs
+  const editContainerRef = useRef<HTMLDivElement>(null);
+  const editSceneRef = useRef<THREE.Scene | null>(null);
+  const editModelRef = useRef<THREE.Group | null>(null);
+  const editRendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const editCameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const editOrbitControlsRef = useRef<OrbitControls | null>(null);
+  const editTransformControlsRef = useRef<TransformControls | null>(null);
+  const [editTransformMode, setEditTransformMode] = useState<'translate' | 'rotate' | 'scale'>('rotate');
+  const [editManualPositionSet, setEditManualPositionSet] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -96,6 +115,8 @@ export default function UploadPortal() {
   const orbitControlsRef = useRef<OrbitControls | null>(null);
   const transformControlsRef = useRef<TransformControls | null>(null);
   const originalBBoxRef = useRef<THREE.Box3 | null>(null);
+  const transformModeRef = useRef<'translate' | 'rotate' | 'scale'>('rotate');
+  const manualPositionSetRef = useRef(false);
   
   // Light and grid refs
   const keyLightRef = useRef<THREE.DirectionalLight | null>(null);
@@ -155,8 +176,9 @@ export default function UploadPortal() {
     return () => window.removeEventListener('storage', loadItems);
   }, []);
 
-  // Snap model bottom to ground
-  const snapToGround = useCallback((model: THREE.Group) => {
+  // Snap model bottom to ground (skip if manual position is set and in translate mode)
+  const snapToGround = useCallback((model: THREE.Group, skipSnap?: boolean) => {
+    if (skipSnap) return;
     const box = new THREE.Box3().setFromObject(model);
     const minY = box.min.y;
     model.position.y -= minY;
@@ -279,8 +301,14 @@ export default function UploadPortal() {
       transformControls.addEventListener('dragging-changed', (event) => {
         orbitControls.enabled = !event.value;
         if (!event.value) {
-          // Snap to ground after transform
-          snapToGround(model);
+          // If in translate mode and user dragged, mark as manual position set
+          if (transformModeRef.current === 'translate') {
+            manualPositionSetRef.current = true;
+            setManualPositionSet(true);
+          }
+          // Snap to ground after transform (skip if manual position set in translate mode)
+          const skipSnap = manualPositionSetRef.current && transformModeRef.current === 'translate';
+          snapToGround(model, skipSnap);
         }
       });
 
@@ -327,6 +355,7 @@ export default function UploadPortal() {
     if (transformControlsRef.current) {
       transformControlsRef.current.setMode(transformMode);
     }
+    transformModeRef.current = transformMode;
   }, [transformMode]);
 
   // Update light 1 (key light) visibility
@@ -349,6 +378,36 @@ export default function UploadPortal() {
       rimLightRef.current.visible = light3On;
     }
   }, [light3On]);
+
+  // Update light 1 (key light) direction
+  useEffect(() => {
+    if (keyLightRef.current) {
+      const rad = (light1Angle * Math.PI) / 180;
+      const distance = 8;
+      keyLightRef.current.position.x = Math.cos(rad) * distance;
+      keyLightRef.current.position.z = Math.sin(rad) * distance;
+    }
+  }, [light1Angle]);
+
+  // Update light 2 (fill light) direction
+  useEffect(() => {
+    if (fillLightRef.current) {
+      const rad = (light2Angle * Math.PI) / 180;
+      const distance = 5;
+      fillLightRef.current.position.x = Math.cos(rad) * distance;
+      fillLightRef.current.position.z = Math.sin(rad) * distance;
+    }
+  }, [light2Angle]);
+
+  // Update light 3 (rim light) direction
+  useEffect(() => {
+    if (rimLightRef.current) {
+      const rad = (light3Angle * Math.PI) / 180;
+      const distance = 5;
+      rimLightRef.current.position.x = Math.cos(rad) * distance;
+      rimLightRef.current.position.z = Math.sin(rad) * distance;
+    }
+  }, [light3Angle]);
 
   // Update grid visibility
   useEffect(() => {
@@ -385,6 +444,9 @@ export default function UploadPortal() {
     setObjectName(f.name.replace(/\.(glb|gltf)$/i, ''));
     setUploadResult(null);
     setAiDescription('');
+    setThumbnailDataUrl(null);
+    setManualPositionSet(false);
+    manualPositionSetRef.current = false;
 
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -428,7 +490,11 @@ export default function UploadPortal() {
         rendererRef.current.render(sceneRef.current, cameraRef.current);
       }
 
-      const screenshot = rendererRef.current.domElement.toDataURL('image/png').split(',')[1];
+      const screenshotDataUrl = rendererRef.current.domElement.toDataURL('image/png');
+      const screenshot = screenshotDataUrl.split(',')[1];
+      
+      // Store the screenshot as thumbnail
+      setThumbnailDataUrl(screenshotDataUrl);
 
       // Restore transform controls
       if (transformControlsRef.current) {
@@ -488,6 +554,9 @@ export default function UploadPortal() {
       // Clone and bake in transform (position as origin, rotation applied)
       const exportScene = modelRef.current.clone();
       
+      // Get the current scale from the model (preview scale)
+      const currentScale = modelRef.current.scale.clone();
+      
       // Apply current transformation to geometry
       exportScene.updateMatrixWorld(true);
       exportScene.traverse((node) => {
@@ -502,9 +571,17 @@ export default function UploadPortal() {
         }
       });
 
-      // Apply scale factor if set
+      // Reset the export scene transform since geometry is already baked
+      exportScene.position.set(0, 0, 0);
+      exportScene.rotation.set(0, 0, 0);
+      exportScene.scale.set(1, 1, 1);
+
+      // Apply scale factor uniformly if set (for real-world dimensions)
       if (scaleFactor && originalBBoxRef.current) {
-        exportScene.scale.setScalar(scaleFactor);
+        // The scaleFactor is relative to original model, but geometry is already baked with preview scale
+        // So we need to apply: (scaleFactor / currentScale) to get correct final size
+        const finalScale = scaleFactor / currentScale.x;
+        exportScene.scale.setScalar(finalScale);
       }
 
       const exporter = new GLTFExporter();
@@ -547,6 +624,7 @@ export default function UploadPortal() {
         type: '3d',
         category,
         tags,
+        thumbnail: thumbnailDataUrl || undefined,
         metadata: {
           materials,
           colors,
@@ -681,6 +759,31 @@ export default function UploadPortal() {
                   >
                     Move
                   </button>
+                  <button
+                    onClick={() => setTransformMode('scale')}
+                    className={`px-3 py-1.5 text-xs rounded transition ${
+                      transformMode === 'scale' 
+                        ? 'bg-white text-black' 
+                        : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
+                    }`}
+                  >
+                    Scale
+                  </button>
+                  {manualPositionSet && (
+                    <button
+                      onClick={() => {
+                        setManualPositionSet(false);
+                        manualPositionSetRef.current = false;
+                        if (modelRef.current) {
+                          snapToGround(modelRef.current);
+                        }
+                      }}
+                      className="px-3 py-1.5 text-xs rounded bg-amber-600 text-white hover:bg-amber-500 transition"
+                      title="Re-enable ground snapping"
+                    >
+                      Snap
+                    </button>
+                  )}
                 </div>
                 {/* Viewer controls - bottom right */}
                 <div className="absolute bottom-3 right-3 flex gap-1.5">
@@ -788,6 +891,54 @@ export default function UploadPortal() {
             {aiDescription && (
               <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg">
                 <p className="text-xs text-blue-300">{aiDescription}</p>
+              </div>
+            )}
+
+            {/* Light Direction Controls */}
+            {file && (
+              <div className="bg-neutral-900 border border-neutral-800 rounded-lg p-4">
+                <div className="text-xs text-neutral-400 mb-3">Light Directions</div>
+                <div className="space-y-3">
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-neutral-500 w-12">Key</span>
+                    <input
+                      type="range"
+                      min="0"
+                      max="360"
+                      value={light1Angle}
+                      onChange={(e) => setLight1Angle(Number(e.target.value))}
+                      className="flex-1 h-1 bg-neutral-700 rounded-lg appearance-none cursor-pointer accent-yellow-500"
+                      disabled={!light1On}
+                    />
+                    <span className="text-xs text-neutral-500 w-8">{light1Angle}°</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-neutral-500 w-12">Fill</span>
+                    <input
+                      type="range"
+                      min="0"
+                      max="360"
+                      value={light2Angle}
+                      onChange={(e) => setLight2Angle(Number(e.target.value))}
+                      className="flex-1 h-1 bg-neutral-700 rounded-lg appearance-none cursor-pointer accent-yellow-500"
+                      disabled={!light2On}
+                    />
+                    <span className="text-xs text-neutral-500 w-8">{light2Angle}°</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-neutral-500 w-12">Rim</span>
+                    <input
+                      type="range"
+                      min="0"
+                      max="360"
+                      value={light3Angle}
+                      onChange={(e) => setLight3Angle(Number(e.target.value))}
+                      className="flex-1 h-1 bg-neutral-700 rounded-lg appearance-none cursor-pointer accent-yellow-500"
+                      disabled={!light3On}
+                    />
+                    <span className="text-xs text-neutral-500 w-8">{light3Angle}°</span>
+                  </div>
+                </div>
               </div>
             )}
           </div>
@@ -944,8 +1095,16 @@ export default function UploadPortal() {
                   key={item.id} 
                   className="bg-neutral-900 border border-neutral-800 rounded-lg overflow-hidden group"
                 >
-                  <div className="aspect-square bg-neutral-800 flex items-center justify-center">
-                    <span className="text-neutral-600 text-xs font-mono">3D</span>
+                  <div className="aspect-square bg-neutral-800 flex items-center justify-center overflow-hidden">
+                    {item.thumbnail ? (
+                      <img 
+                        src={item.thumbnail} 
+                        alt={item.name}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <span className="text-neutral-600 text-xs font-mono">3D</span>
+                    )}
                   </div>
                   <div className="p-3">
                     <h3 className="font-medium text-sm truncate">{item.name}</h3>
