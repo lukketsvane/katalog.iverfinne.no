@@ -362,6 +362,9 @@ interface DetailModalProps {
 }
 
 const DetailModal: React.FC<DetailModalProps> = ({ item, onClose, t }) => {
+  const displayName = translateItemName(item.name, t);
+  const displayCategory = translateCategory(item.category, t);
+
   useEffect(() => {
     document.body.style.overflow = 'hidden';
     return () => {
@@ -399,9 +402,9 @@ const DetailModal: React.FC<DetailModalProps> = ({ item, onClose, t }) => {
                     <div className="flex-1">
                         <div className="mb-8">
                             <span className="inline-block text-[10px] uppercase tracking-widest font-semibold text-gray-400 mb-4">
-                                {item.category.split('/').pop()}
+                                {displayCategory}
                             </span>
-                            <h2 className="text-3xl font-serif font-medium text-gray-900 leading-none mb-4 tracking-tight">{item.name}</h2>
+                            <h2 className="text-3xl font-serif font-medium text-gray-900 leading-none mb-4 tracking-tight">{displayName}</h2>
                             <p className="text-sm text-gray-500 leading-relaxed font-light">
                                 {item.metadata.description || t.curatedDescription}
                             </p>
@@ -636,7 +639,7 @@ const GridItem: React.FC<GridItemProps> = ({ item, onClick, onThumbnailGenerated
 
       <div className="absolute bottom-3 left-0 right-0 text-center opacity-0 group-hover:opacity-100 transition-opacity duration-300">
         <span className="inline-block bg-white/90 backdrop-blur-sm px-2 py-1 rounded text-black text-[10px] font-medium tracking-wide shadow-sm border border-black/5">
-          {item.name}
+          {displayName}
         </span>
       </div>
     </div>
@@ -893,7 +896,7 @@ export default function Page() {
         ) : (
           <div style={{ display: 'grid', ...gridStyles[gridSize] }} className="w-full animate-in fade-in slide-in-from-bottom-4 duration-500">
             {filteredItems.map((item) => (
-              <GridItem key={item.id} item={item} onClick={setSelectedItem} onThumbnailGenerated={handleThumbnailGenerated} />
+              <GridItem key={item.id} item={item} onClick={setSelectedItem} onThumbnailGenerated={handleThumbnailGenerated} t={t} />
             ))}
           </div>
         )}
