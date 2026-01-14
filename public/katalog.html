@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Katalog</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,400&display=swap" rel="stylesheet">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    :root { --bg: #f8f8f8; --card-bg: #efefef; --text: #1a1a1a; --text-muted: #666; --border: #e0e0e0; }
+    html, body { font-family: 'DM Sans', -apple-system, sans-serif; background: var(--bg); color: var(--text); overflow-x: hidden; min-height: 100dvh; }
+    .app { min-height: 100dvh; padding-bottom: env(safe-area-inset-bottom); }
+    .header { position: sticky; top: 0; z-index: 100; background: var(--bg); padding: 16px 20px 12px; border-bottom: 1px solid var(--border); }
+    .header-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+    .logo { font-size: 15px; font-weight: 500; letter-spacing: 0.5px; text-transform: lowercase; }
+    .item-count { font-size: 12px; color: var(--text-muted); }
+    .filter-bar { display: flex; align-items: center; gap: 6px; font-size: 12px; flex-wrap: wrap; }
+    .filter-label { color: var(--text-muted); margin-right: 4px; }
+    .filter-link { color: var(--text); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; padding: 4px 2px; transition: opacity 0.15s; background: none; border: none; font: inherit; }
+    .filter-link:hover { opacity: 0.6; }
+    .filter-link.active { font-weight: 500; }
+    .filter-separator { color: var(--text-muted); margin: 0 2px; }
+    .size-toggle { margin-left: auto; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; color: var(--text); padding: 4px 8px; background: none; border: none; font: inherit; }
+    .tags-bar { display: flex; gap: 8px; padding: 12px 20px; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+    .tags-bar::-webkit-scrollbar { display: none; }
+    .tag-btn { flex-shrink: 0; font-size: 11px; padding: 6px 12px; border-radius: 20px; border: 1px solid var(--border); background: white; color: var(--text); cursor: pointer; transition: all 0.15s; font-family: inherit; display: flex; align-items: center; gap: 5px; }
+    .tag-btn:hover { background: var(--card-bg); }
+    .tag-btn.active { background: var(--text); color: white; border-color: var(--text); }
+    .tag-btn .count { opacity: 0.5; }
+    .grid-container { padding: 12px; }
+    .grid { display: grid; gap: 4px; transition: all 0.2s ease; }
+    .grid.size-xs { grid-template-columns: repeat(auto-fill, minmax(50px, 1fr)); gap: 3px; }
+    .grid.size-sm { grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 4px; }
+    .grid.size-md { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px; }
+    .grid.size-lg { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+    .card { aspect-ratio: 1; background: var(--card-bg); border-radius: 3px; overflow: hidden; cursor: pointer; position: relative; transition: transform 0.15s, box-shadow 0.15s; border: none; padding: 0; }
+    .card:hover { transform: scale(1.02); box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
+    .card:active { transform: scale(0.98); }
+    .card canvas { width: 100% !important; height: 100% !important; display: block; }
+    .card-loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--card-bg); z-index: 1; }
+    .card-loading::after { content: ''; width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--text); border-radius: 50%; animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 1000; display: flex; align-items: center; justify-content: center; opacity: 0; visibility: hidden; transition: all 0.25s ease; padding: 20px; padding-bottom: calc(20px + env(safe-area-inset-bottom)); }
+    .modal-overlay.open { opacity: 1; visibility: visible; }
+    .modal { background: white; border-radius: 12px; width: 100%; max-width: 600px; max-height: 90dvh; overflow: hidden; display: flex; flex-direction: column; transform: scale(0.95) translateY(20px); transition: transform 0.25s ease; }
+    .modal-overlay.open .modal { transform: scale(1) translateY(0); }
+    .modal-viewer { width: 100%; aspect-ratio: 1; background: var(--card-bg); position: relative; }
+    .modal-viewer canvas { width: 100% !important; height: 100% !important; }
+    .modal-close { position: absolute; top: 12px; right: 12px; width: 36px; height: 36px; border-radius: 50%; background: rgba(255,255,255,0.9); border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 18px; z-index: 10; transition: transform 0.15s; }
+    .modal-close:hover { transform: scale(1.1); }
+    .modal-info { padding: 20px; overflow-y: auto; max-height: 40dvh; }
+    .modal-name { font-size: 18px; font-weight: 500; margin-bottom: 8px; }
+    .modal-category { font-size: 12px; color: var(--text-muted); margin-bottom: 12px; }
+    .modal-meta { font-size: 11px; color: var(--text-muted); }
+    .modal-meta span { margin-right: 16px; }
+    .viewer-hint { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); font-size: 10px; color: rgba(0,0,0,0.4); pointer-events: none; }
+    .loading-spinner { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 30px; height: 30px; border: 2px solid var(--border); border-top-color: var(--text); border-radius: 50%; animation: spin 0.8s linear infinite; }
+    .search-container { padding: 0 20px 12px; }
+    .search-input { width: 100%; padding: 10px 14px; font-size: 13px; font-family: inherit; border: 1px solid var(--border); border-radius: 8px; background: white; outline: none; transition: border-color 0.15s; }
+    .search-input:focus { border-color: var(--text); }
+    .search-input::placeholder { color: #999; }
+    .empty-state { text-align: center; padding: 60px 20px; color: var(--text-muted); }
+    .empty-state h3 { font-size: 16px; margin-bottom: 8px; font-weight: 500; }
+    .empty-state p { font-size: 13px; }
+    @media (max-width: 480px) {
+      .header { padding: 12px 16px 10px; }
+      .filter-bar { font-size: 11px; }
+      .tags-bar { padding: 10px 16px; gap: 6px; }
+      .tag-btn { padding: 5px 10px; font-size: 10px; }
+      .grid-container { padding: 8px; }
+      .grid.size-xs { grid-template-columns: repeat(auto-fill, minmax(45px, 1fr)); }
+      .grid.size-sm { grid-template-columns: repeat(auto-fill, minmax(70px, 1fr)); }
+      .grid.size-md { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); }
+      .grid.size-lg { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+    }
+  </style>
+</head>
+<body>
+  <div id="app" class="app">
+    <div style="display:flex;align-items:center;justify-content:center;height:100vh;">
+      <div class="loading-spinner"></div>
+    </div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+    const BLOB_BASE = 'https://yswmt0em8hyvljdk.public.blob.vercel-storage.com';
+    
+    // Items from actual blob storage
+    const CATALOG_ITEMS = [
+      {
+        id: 1,
+        name: 'Mechanical Keyboard',
+        url: `${BLOB_BASE}/electronics/mechanical-keyboard-1768366050152-uB9sdebxEqtXAE5ySxGPopefn7HLBN.glb`,
+        category: 'electronics',
+        tags: ['keyboard', 'mechanical', 'tech'],
+        size: '30.1 MB',
+        uploadedAt: '2026-01-14'
+      },
+      {
+        id: 2,
+        name: 'Battery Energy Drink',
+        url: `${BLOB_BASE}/kitchen/battery-energy-drink-1768364798401-5JqO78AiCwAQm7Y1W9VT1RkcKmpzYe.glb`,
+        category: 'kitchen',
+        tags: ['drink', 'can', 'energy'],
+        size: '3.9 MB',
+        uploadedAt: '2026-01-14'
+      },
+      {
+        id: 3,
+        name: 'Camel Cigarette Pack',
+        url: `${BLOB_BASE}/personal/camel-cigarette-pack-1768363441889-J5EEUIgRekBSD0oIuJEfMrKkQjw90u.glb`,
+        category: 'personal',
+        tags: ['cigarettes', 'camel', 'pack'],
+        size: '4.6 MB',
+        uploadedAt: '2026-01-14'
+      },
+      {
+        id: 4,
+        name: 'Cigarette Pack',
+        url: `${BLOB_BASE}/personal/cigarette-pack-1768360298495-x3Nx8mURa51kxNCifbT6qPzyWbomNz.glb`,
+        category: 'personal',
+        tags: ['cigarettes', 'pack'],
+        size: '45.9 MB',
+        uploadedAt: '2026-01-14'
+      },
+      {
+        id: 5,
+        name: 'Cigarette Pack Alt',
+        url: `${BLOB_BASE}/personal/cigarette-pack-1768362263788-QaNdHbPUQups26NpmO6fkS3tuXCxrP.glb`,
+        category: 'personal',
+        tags: ['cigarettes', 'pack'],
+        size: '45.9 MB',
+        uploadedAt: '2026-01-14'
+      },
+      {
+        id: 6,
+        name: 'Bobblehead Figurine',
+        url: `${BLOB_BASE}/toys/man-bobblehead-figurine-1768365190007-S7dL4VU4sbK0jul3l6ZEhSZwjTaOyu.glb`,
+        category: 'toys',
+        tags: ['figurine', 'bobblehead', 'toy'],
+        size: '2.4 MB',
+        uploadedAt: '2026-01-14'
+      }
+    ];
+
+    // State
+    let state = {
+      items: CATALOG_ITEMS,
+      filteredItems: CATALOG_ITEMS,
+      selectedCategory: 'all',
+      searchQuery: '',
+      gridSize: 'md',
+      selectedItem: null,
+      cardRenderers: new Map()
+    };
+
+    const gltfLoader = new GLTFLoader();
+
+    function getCategories(items) {
+      const cats = new Set(['all']);
+      items.forEach(item => { if (item.category) cats.add(item.category); });
+      return Array.from(cats);
+    }
+
+    function filterItems() {
+      let filtered = [...state.items];
+      if (state.selectedCategory !== 'all') {
+        filtered = filtered.filter(item => item.category === state.selectedCategory);
+      }
+      if (state.searchQuery) {
+        const q = state.searchQuery.toLowerCase();
+        filtered = filtered.filter(item =>
+          item.name?.toLowerCase().includes(q) ||
+          item.category?.toLowerCase().includes(q) ||
+          item.tags?.some(t => t.toLowerCase().includes(q))
+        );
+      }
+      state.filteredItems = filtered;
+    }
+
+    function createCardViewer(container, url, itemId) {
+      const rect = container.getBoundingClientRect();
+      const size = Math.max(rect.width, rect.height) || 150;
+
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0xefefef);
+
+      const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 1000);
+      camera.position.set(2.5, 1.8, 2.5);
+      camera.lookAt(0, 0, 0);
+
+      const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setSize(size, size);
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.2;
+      container.appendChild(renderer.domElement);
+
+      scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+      const key = new THREE.DirectionalLight(0xffffff, 1);
+      key.position.set(5, 8, 5);
+      scene.add(key);
+      const fill = new THREE.DirectionalLight(0xffffff, 0.4);
+      fill.position.set(-5, 2, -5);
+      scene.add(fill);
+      const rim = new THREE.DirectionalLight(0xffffff, 0.3);
+      rim.position.set(0, -5, -5);
+      scene.add(rim);
+
+      let model = null;
+      let animId = null;
+      let angle = Math.random() * Math.PI * 2;
+
+      gltfLoader.load(url, (gltf) => {
+        model = gltf.scene;
+        const box = new THREE.Box3().setFromObject(model);
+        const s = box.getSize(new THREE.Vector3());
+        const c = box.getCenter(new THREE.Vector3());
+        const maxDim = Math.max(s.x, s.y, s.z);
+        const scale = 1.8 / maxDim;
+        model.scale.setScalar(scale);
+        model.position.sub(c.multiplyScalar(scale));
+        scene.add(model);
+
+        const loadingEl = container.parentElement?.querySelector('.card-loading');
+        if (loadingEl) loadingEl.style.display = 'none';
+
+        function animate() {
+          angle += 0.006;
+          model.rotation.y = angle;
+          renderer.render(scene, camera);
+          animId = requestAnimationFrame(animate);
+        }
+        animate();
+
+        state.cardRenderers.set(itemId, { renderer, scene, camera, animId });
+      }, undefined, (err) => {
+        console.error('Error loading:', url, err);
+        const loadingEl = container.parentElement?.querySelector('.card-loading');
+        if (loadingEl) {
+          loadingEl.innerHTML = '<span style="font-size:9px;color:#999;">Error</span>';
+        }
+      });
+    }
+
+    function render() {
+      // Cleanup old renderers
+      state.cardRenderers.forEach((r, id) => {
+        if (r.animId) cancelAnimationFrame(r.animId);
+        r.renderer.dispose();
+      });
+      state.cardRenderers.clear();
+
+      const categories = getCategories(state.items);
+      const app = document.getElementById('app');
+      
+      app.innerHTML = `
+        <header class="header">
+          <div class="header-top">
+            <span class="logo">katalog</span>
+            <span class="item-count">${state.filteredItems.length} of ${state.items.length} objects</span>
+          </div>
+          <div class="filter-bar">
+            <span class="filter-label">Filter by:</span>
+            ${categories.map((cat, i) => `
+              <button class="filter-link ${state.selectedCategory === cat ? 'active' : ''}" data-category="${cat}">
+                ${cat === 'all' ? 'All' : cat}
+              </button>
+              ${i < categories.length - 1 ? '<span class="filter-separator">|</span>' : ''}
+            `).join('')}
+            <button class="size-toggle" data-action="toggle-size">Change size</button>
+          </div>
+        </header>
+        
+        <div class="search-container">
+          <input type="text" class="search-input" placeholder="Search objects..." value="${state.searchQuery}">
+        </div>
+        
+        <div class="tags-bar">
+          ${['all', 'keyboard', 'drink', 'cigarettes', 'figurine', 'toy'].map(tag => `
+            <button class="tag-btn ${state.searchQuery === tag || (tag === 'all' && !state.searchQuery) ? 'active' : ''}" data-tag="${tag}">
+              ${tag === 'all' ? 'Show All' : tag}
+            </button>
+          `).join('')}
+        </div>
+        
+        <div class="grid-container">
+          ${state.filteredItems.length === 0 ? `
+            <div class="empty-state">
+              <h3>No objects found</h3>
+              <p>Try adjusting your filters</p>
+            </div>
+          ` : `
+            <div class="grid size-${state.gridSize}">
+              ${state.filteredItems.map(item => `
+                <button class="card" data-id="${item.id}">
+                  <div class="card-loading"></div>
+                  <div class="card-canvas" data-url="${item.url}" data-item-id="${item.id}"></div>
+                </button>
+              `).join('')}
+            </div>
+          `}
+        </div>
+        
+        <div class="modal-overlay" id="modal">
+          <div class="modal">
+            <div class="modal-viewer" id="viewer-container">
+              <button class="modal-close" data-action="close-modal">×</button>
+              <div class="loading-spinner" id="viewer-loading"></div>
+              <span class="viewer-hint">Drag to rotate • Pinch to zoom</span>
+            </div>
+            <div class="modal-info" id="modal-info"></div>
+          </div>
+        </div>
+      `;
+      
+      attachEvents();
+      
+      // Load 3D thumbnails with staggered timing
+      setTimeout(() => {
+        document.querySelectorAll('.card-canvas').forEach((container, idx) => {
+          const url = container.dataset.url;
+          const itemId = parseInt(container.dataset.itemId);
+          setTimeout(() => {
+            if (container.isConnected) {
+              createCardViewer(container, url, itemId);
+            }
+          }, idx * 300);
+        });
+      }, 100);
+    }
+
+    function attachEvents() {
+      document.querySelectorAll('[data-category]').forEach(el => {
+        el.addEventListener('click', () => {
+          state.selectedCategory = el.dataset.category;
+          filterItems();
+          render();
+        });
+      });
+
+      document.querySelectorAll('[data-tag]').forEach(el => {
+        el.addEventListener('click', () => {
+          state.searchQuery = el.dataset.tag === 'all' ? '' : el.dataset.tag;
+          filterItems();
+          render();
+        });
+      });
+
+      document.querySelector('[data-action="toggle-size"]')?.addEventListener('click', () => {
+        const sizes = ['xs', 'sm', 'md', 'lg'];
+        state.gridSize = sizes[(sizes.indexOf(state.gridSize) + 1) % sizes.length];
+        render();
+      });
+
+      let searchTimeout;
+      document.querySelector('.search-input')?.addEventListener('input', (e) => {
+        state.searchQuery = e.target.value;
+        filterItems();
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(() => render(), 400);
+      });
+
+      document.querySelectorAll('.card').forEach(card => {
+        card.addEventListener('click', () => {
+          const id = parseInt(card.dataset.id);
+          const item = state.items.find(i => i.id === id);
+          if (item) openModal(item);
+        });
+      });
+
+      document.querySelector('[data-action="close-modal"]')?.addEventListener('click', closeModal);
+      document.getElementById('modal')?.addEventListener('click', (e) => {
+        if (e.target.id === 'modal') closeModal();
+      });
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+    }
+
+    let modalScene, modalCamera, modalRenderer, modalControls, modalModel;
+
+    function initModalViewer() {
+      const container = document.getElementById('viewer-container');
+      if (!container || modalRenderer) return;
+
+      modalScene = new THREE.Scene();
+      modalScene.background = new THREE.Color(0xefefef);
+
+      modalCamera = new THREE.PerspectiveCamera(40, 1, 0.1, 1000);
+      modalCamera.position.set(3, 2, 3);
+
+      modalRenderer = new THREE.WebGLRenderer({ antialias: true });
+      modalRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      modalRenderer.setSize(container.clientWidth, container.clientWidth);
+      modalRenderer.toneMapping = THREE.ACESFilmicToneMapping;
+      modalRenderer.toneMappingExposure = 1.2;
+      container.appendChild(modalRenderer.domElement);
+
+      modalControls = new OrbitControls(modalCamera, modalRenderer.domElement);
+      modalControls.enableDamping = true;
+      modalControls.dampingFactor = 0.05;
+      modalControls.minDistance = 0.5;
+      modalControls.maxDistance = 10;
+      modalControls.enablePan = false;
+
+      modalScene.add(new THREE.AmbientLight(0xffffff, 0.7));
+      const key = new THREE.DirectionalLight(0xffffff, 1);
+      key.position.set(5, 8, 5);
+      modalScene.add(key);
+      const fill = new THREE.DirectionalLight(0xffffff, 0.4);
+      fill.position.set(-5, 2, -5);
+      modalScene.add(fill);
+
+      function animate() {
+        requestAnimationFrame(animate);
+        modalControls.update();
+        modalRenderer.render(modalScene, modalCamera);
+      }
+      animate();
+    }
+
+    function loadModalModel(url) {
+      const loading = document.getElementById('viewer-loading');
+      if (loading) loading.style.display = 'block';
+
+      if (modalModel) {
+        modalScene.remove(modalModel);
+        modalModel.traverse(child => {
+          if (child.geometry) child.geometry.dispose();
+          if (child.material) {
+            if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
+            else child.material.dispose();
+          }
+        });
+        modalModel = null;
+      }
+
+      gltfLoader.load(url, (gltf) => {
+        modalModel = gltf.scene;
+        const box = new THREE.Box3().setFromObject(modalModel);
+        const s = box.getSize(new THREE.Vector3());
+        const c = box.getCenter(new THREE.Vector3());
+        const maxDim = Math.max(s.x, s.y, s.z);
+        const scale = 2 / maxDim;
+        modalModel.scale.setScalar(scale);
+        modalModel.position.sub(c.multiplyScalar(scale));
+        modalScene.add(modalModel);
+        modalCamera.position.set(3, 2, 3);
+        modalControls.reset();
+        if (loading) loading.style.display = 'none';
+      }, undefined, () => {
+        if (loading) loading.style.display = 'none';
+      });
+    }
+
+    function openModal(item) {
+      state.selectedItem = item;
+      const modal = document.getElementById('modal');
+      const info = document.getElementById('modal-info');
+
+      info.innerHTML = `
+        <h2 class="modal-name">${item.name}</h2>
+        <p class="modal-category">${item.category}</p>
+        <div class="modal-meta">
+          <span>Size: ${item.size}</span>
+          <span>Uploaded: ${item.uploadedAt}</span>
+        </div>
+        ${item.tags?.length ? `
+          <div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:6px;">
+            ${item.tags.map(t => `<span style="font-size:10px;padding:4px 10px;background:#f0f0f0;border-radius:12px;">${t}</span>`).join('')}
+          </div>
+        ` : ''}
+      `;
+
+      modal.classList.add('open');
+      document.body.style.overflow = 'hidden';
+
+      if (!modalRenderer) initModalViewer();
+      loadModalModel(item.url);
+    }
+
+    function closeModal() {
+      document.getElementById('modal').classList.remove('open');
+      document.body.style.overflow = '';
+      state.selectedItem = null;
+    }
+
+    render();
+  </script>
+</body>
+</html>
