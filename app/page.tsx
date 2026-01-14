@@ -5,14 +5,10 @@ import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, Stage, useGLTF, Html, Center } from '@react-three/drei';
 import * as THREE from 'three';
 import { 
-  Search, 
   Loader2, 
-  RefreshCw, 
-  AlertTriangle, 
   X, 
   Box, 
-  FileText, 
-  Calendar 
+  Maximize2,
 } from 'lucide-react';
 
 // --- TYPES ---
@@ -48,7 +44,7 @@ export interface CatalogItem {
 export type GridSize = 'xs' | 'sm' | 'medium' | 'large';
 
 // --- CONSTANTS ---
-export const BLOB_READ_WRITE_TOKEN = "vercel_blob_rw_YswMt0em8HYvljdK_0MOyT2ajRHDzmmTNZyphw5AD66MsSh";
+const BLOB_READ_WRITE_TOKEN = "vercel_blob_rw_YswMt0em8HYvljdK_0MOyT2ajRHDzmmTNZyphw5AD66MsSh";
 
 // --- COMPONENTS ---
 
@@ -60,6 +56,7 @@ interface Viewer3DProps {
   showInfo?: boolean;
   className?: string;
   onCapture?: (url: string) => void;
+  autoRotate?: boolean;
 }
 
 function Model({ url, metadata }: { url: string; metadata?: CatalogMetadata }) {
@@ -111,8 +108,9 @@ function CaptureHelper({ onCapture }: { onCapture: (url: string) => void }) {
 
 class ErrorBoundary extends React.Component<{ fallback: React.ReactNode; children: React.ReactNode }, { hasError: boolean }> {
   state = { hasError: false };
-  static getDerivedStateFromError(_: Error) { return { hasError: true }; }
-  componentDidCatch(error: any, errorInfo: any) { console.error("ErrorBoundary caught an error:", error, errorInfo); }
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  static getDerivedStateFromError(_error: Error) { return { hasError: true }; }
+  componentDidCatch(error: unknown, errorInfo: unknown) { console.error("ErrorBoundary caught an error:", error, errorInfo); }
   render() {
     if (this.state.hasError) return this.props.fallback;
     return this.props.children;
@@ -120,7 +118,7 @@ class ErrorBoundary extends React.Component<{ fallback: React.ReactNode; childre
 }
 
 function ViewerLoader() {
-  return <Html center><div className="text-xs font-mono text-gray-400 bg-white/80 px-2 py-1 rounded">Loading...</div></Html>;
+  return <Html center><div className="text-xs font-mono text-gray-400 bg-white/80 px-2 py-1 rounded-full backdrop-blur-md border border-white/20">Loading...</div></Html>;
 }
 
 function FallbackMesh({ color }: { color?: string }) {
@@ -138,25 +136,27 @@ const Viewer3D: React.FC<Viewer3DProps> = ({
     metadata, 
     showInfo = true, 
     className = "bg-gray-50 rounded-lg",
-    onCapture
+    onCapture,
+    autoRotate = true
 }) => {
   return (
     <div className={`w-full h-full overflow-hidden relative ${className}`}>
       <Canvas 
-        shadows={showInfo} 
+        shadows={false}
         dpr={[1, 2]} 
-        camera={{ position: [0, 0, 4], fov: 50 }}
-        gl={{ preserveDrawingBuffer: !!onCapture }}
+        // FOV 12 approx 200mm lens effect for orthographic look
+        camera={{ position: [0, 0, 35], fov: 12 }}
+        gl={{ preserveDrawingBuffer: !!onCapture, alpha: true }}
       >
         <ErrorBoundary key={url} fallback={
-             <Stage environment="city" intensity={0.5}>
+             <Stage environment="city" intensity={0.5} shadows={false}>
                 <Center>
                     <FallbackMesh color={color} />
                 </Center>
              </Stage>
         }>
             <Suspense fallback={<ViewerLoader />}>
-                <Stage environment="city" intensity={0.6} adjustCamera={1.2}>
+                <Stage environment="city" intensity={0.6} adjustCamera={1.2} shadows={false}>
                     <Center>
                         <Model url={url} metadata={metadata} />
                     </Center>
@@ -164,12 +164,14 @@ const Viewer3D: React.FC<Viewer3DProps> = ({
                 {onCapture && <CaptureHelper onCapture={onCapture} />}
             </Suspense>
         </ErrorBoundary>
-        <OrbitControls autoRotate={true} autoRotateSpeed={showInfo ? 2 : 4} enableZoom={showInfo} makeDefault />
+        <OrbitControls autoRotate={autoRotate} autoRotateSpeed={showInfo ? 0.5 : 1} enableZoom={showInfo} makeDefault />
       </Canvas>
       
       {showInfo && (
         <div className="absolute bottom-4 right-4 pointer-events-none">
-             <span className="text-[10px] text-gray-400 font-mono uppercase bg-white/80 px-2 py-1 rounded backdrop-blur-sm border border-gray-100">Interactive 3D</span>
+             <div className="flex items-center justify-center w-8 h-8 rounded-full bg-white/80 backdrop-blur-md shadow-sm border border-white/50">
+                <Box size={14} className="text-gray-500" />
+             </div>
         </div>
       )}
     </div>
@@ -191,52 +193,55 @@ const DetailModal: React.FC<DetailModalProps> = ({ item, onClose }) => {
   }, []);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-0 md:p-6 animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-white/90 backdrop-blur-md animate-in fade-in duration-300">
       <div className="absolute inset-0" onClick={onClose} />
-      <div className="relative w-full h-full md:max-w-5xl md:h-[90vh] bg-white md:rounded-2xl overflow-hidden flex flex-col shadow-2xl">
-        <div className="md:hidden absolute top-0 left-0 right-0 z-20 p-4 flex justify-end bg-gradient-to-b from-black/20 to-transparent pointer-events-none">
-             <button onClick={onClose} className="pointer-events-auto w-8 h-8 flex items-center justify-center bg-white/90 rounded-full shadow-sm">
-              <X className="w-4 h-4 text-black" />
+      <div className="relative w-full h-full md:max-w-5xl md:h-[85vh] bg-white md:rounded-[2rem] overflow-hidden flex flex-col shadow-2xl shadow-black/5 animate-in slide-in-from-bottom-4 duration-500 border border-gray-100">
+        
+        {/* Mobile Header */}
+        <div className="md:hidden absolute top-0 left-0 right-0 z-20 p-4 flex justify-between items-start pointer-events-none">
+             <div />
+             <button onClick={onClose} className="pointer-events-auto w-10 h-10 flex items-center justify-center bg-white/80 backdrop-blur-md rounded-full shadow-sm border border-gray-100">
+              <X className="w-5 h-5 text-black" />
             </button>
         </div>
-        <button onClick={onClose} className="hidden md:flex absolute top-4 right-4 z-20 w-8 h-8 items-center justify-center bg-white rounded-full border border-gray-100 shadow-sm hover:bg-gray-50 transition-colors">
-          <X className="w-4 h-4 text-gray-500" />
+
+        {/* Desktop Close */}
+        <button onClick={onClose} className="hidden md:flex absolute top-6 right-6 z-20 w-10 h-10 items-center justify-center bg-white/80 backdrop-blur-md rounded-full border border-gray-100 shadow-sm hover:bg-white transition-all hover:scale-105 active:scale-95">
+          <X className="w-5 h-5 text-gray-600" />
         </button>
 
         <div className="flex-1 flex flex-col md:flex-row h-full overflow-hidden">
-            <div className="w-full md:w-3/4 h-[60vh] md:h-full bg-[#f0f0f0] relative">
-                <Viewer3D url={item.url} color={item.metadata.colors?.[0]} metadata={item.metadata} />
-                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-[10px] text-gray-400 bg-white/80 px-3 py-1 rounded-full backdrop-blur-sm pointer-events-none border border-white/50">
-                    Drag to rotate • Pinch to zoom
-                </div>
+            {/* 3D View */}
+            <div className="w-full md:w-2/3 h-[55vh] md:h-full bg-[#fcfcfc] relative">
+                <Viewer3D url={item.url} color={item.metadata.colors?.[0]} metadata={item.metadata} className="bg-[#fcfcfc]" />
             </div>
-            <div className="w-full md:w-1/4 h-auto md:h-full bg-white border-l border-gray-100 flex flex-col overflow-y-auto">
-                <div className="p-6">
-                    <div className="mb-4">
-                        <span className="inline-block px-2 py-0.5 text-[9px] uppercase tracking-wider font-semibold text-gray-500 bg-gray-100 rounded mb-2">
-                            {item.category.split('/').pop()}
-                        </span>
-                        <h2 className="text-xl font-medium text-gray-900 leading-tight">{item.name}</h2>
-                    </div>
-                    <div className="space-y-4">
-                        <div className="flex items-center justify-between text-xs text-gray-500 py-2 border-b border-gray-50">
-                            <div className="flex items-center gap-2"><FileText size={12}/> <span>File Size</span></div>
-                            <span className="font-mono text-gray-900">{item.size ? (item.size / (1024 * 1024)).toFixed(2) + ' MB' : 'Unknown'}</span>
+
+            {/* Info Panel */}
+            <div className="w-full md:w-1/3 h-auto md:h-full bg-white md:border-l border-gray-50 flex flex-col overflow-y-auto relative z-10 -mt-6 md:mt-0 rounded-t-[2rem] md:rounded-none">
+                <div className="p-8 pt-10 md:pt-12 flex flex-col h-full">
+                    <div className="flex-1">
+                        <div className="mb-8">
+                            <span className="inline-block text-[10px] uppercase tracking-widest font-semibold text-gray-400 mb-4">
+                                {item.category.split('/').pop()}
+                            </span>
+                            <h2 className="text-3xl font-serif font-medium text-gray-900 leading-none mb-4 tracking-tight">{item.name}</h2>
+                            <p className="text-sm text-gray-500 leading-relaxed font-light">
+                                {item.metadata.description || "A curated 3D object from the collection."}
+                            </p>
                         </div>
-                        <div className="flex items-center justify-between text-xs text-gray-500 py-2 border-b border-gray-50">
-                            <div className="flex items-center gap-2"><Calendar size={12}/> <span>Added</span></div>
-                            <span className="text-gray-900">{item.metadata.uploadedAt ? new Date(item.metadata.uploadedAt).toLocaleDateString() : 'Unknown'}</span>
+
+                        <div className="grid grid-cols-2 gap-6 pt-6 border-t border-gray-50">
+                             <div>
+                                <span className="block text-[10px] font-bold uppercase tracking-wider text-gray-300 mb-1">Added</span>
+                                <span className="font-mono text-xs text-gray-600">
+                                    {item.metadata.uploadedAt ? new Date(item.metadata.uploadedAt).toLocaleDateString(undefined, {month: 'long', year: 'numeric'}) : 'Unknown'}
+                                </span>
+                             </div>
+                             <div>
+                                <span className="block text-[10px] font-bold uppercase tracking-wider text-gray-300 mb-1">Type</span>
+                                <span className="font-mono text-xs text-gray-600">GLB Asset</span>
+                             </div>
                         </div>
-                        {item.tags.length > 0 && (
-                            <div className="py-2">
-                                <span className="text-[10px] uppercase text-gray-400 font-semibold mb-2 block">Tags</span>
-                                <div className="flex flex-wrap gap-1.5">
-                                    {item.tags.map(tag => (
-                                        <span key={tag} className="px-2 py-1 bg-gray-50 text-gray-600 text-[10px] rounded border border-gray-100">{tag}</span>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
                     </div>
                 </div>
             </div>
@@ -273,7 +278,9 @@ const GridItem: React.FC<GridItemProps> = ({ item, onClick, onThumbnailGenerated
 
   useEffect(() => {
     let timeout: ReturnType<typeof setTimeout>;
-    if (isHovered && !item.thumbnail && !isGenerating) {
+    const isTouch = 'ontouchstart' in window;
+    
+    if (isHovered && !item.thumbnail && !isGenerating && !isTouch) {
         timeout = setTimeout(() => setShowPreview(true), 600);
     } else {
         setShowPreview(false);
@@ -291,7 +298,7 @@ const GridItem: React.FC<GridItemProps> = ({ item, onClick, onThumbnailGenerated
              if (idx > -1) generationQueue.splice(idx, 1);
         };
     }
-  }, [item.thumbnail, onThumbnailGenerated]);
+  }, [item.thumbnail, onThumbnailGenerated, isGenerating]);
 
   const handleCapture = (url: string) => {
       activeGenerators--;
@@ -301,57 +308,48 @@ const GridItem: React.FC<GridItemProps> = ({ item, onClick, onThumbnailGenerated
   };
 
   return (
-    <button 
+    <div 
       onClick={() => onClick(item)}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
-      className="group relative w-full aspect-square bg-white rounded-md overflow-hidden border border-transparent hover:border-gray-200 hover:shadow-lg transition-all duration-200 cursor-pointer text-left focus:outline-none focus:ring-2 focus:ring-black/5"
+      className="group relative w-full aspect-square bg-white rounded-xl overflow-hidden cursor-pointer transition-all duration-300"
     >
-      <div className="w-full h-full bg-[#efefef] flex items-center justify-center overflow-hidden relative">
+      <div className="w-full h-full bg-[#fcfcfc] flex items-center justify-center overflow-hidden relative">
           {item.thumbnail ? (
             <img 
               src={item.thumbnail} 
               alt={item.name} 
-              className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+              className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105 ease-out"
               loading="lazy"
             />
           ) : (
             <>
                 {isGenerating && (
                     <div className="absolute inset-0 z-0 opacity-0 pointer-events-none">
-                        <Viewer3D url={item.url} metadata={item.metadata} showInfo={false} onCapture={handleCapture} />
+                        <Viewer3D url={item.url} metadata={item.metadata} showInfo={false} onCapture={handleCapture} autoRotate={false} />
                     </div>
                 )}
                 {showPreview && !isGenerating ? (
-                    <div className="absolute inset-0 z-10 animate-in fade-in duration-500 bg-[#efefef]">
-                        <Viewer3D url={item.url} metadata={item.metadata} showInfo={false} className="bg-[#efefef]" />
+                    <div className="absolute inset-0 z-10 animate-in fade-in duration-500 bg-[#fcfcfc]">
+                        <Viewer3D url={item.url} metadata={item.metadata} showInfo={false} className="bg-[#fcfcfc]" />
                     </div>
                 ) : (
                     <div className="text-gray-300 flex flex-col items-center justify-center p-2 transition-opacity duration-200 group-hover:opacity-50">
                        {isGenerating ? (
-                           <>
-                             <Loader2 className="w-5 h-5 mb-1 opacity-50 animate-spin text-gray-400" />
-                             <span className="text-[9px] font-mono opacity-50 uppercase text-gray-400">Generating...</span>
-                           </>
+                           <Loader2 className="w-6 h-6 opacity-30 animate-spin text-gray-500" />
                        ) : (
-                           <>
-                             <Box className="w-1/3 h-1/3 mb-1 opacity-50" strokeWidth={1.5} />
-                             <span className="text-[9px] font-mono opacity-50 uppercase">3D Asset</span>
-                           </>
+                           <Box className="w-8 h-8 opacity-20" strokeWidth={1.5} />
                        )}
                     </div>
                 )}
             </>
           )}
       </div>
-      {!showPreview && (
-          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/5 transition-colors duration-200 pointer-events-none" />
-      )}
-      <div className={`absolute bottom-0 left-0 right-0 p-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 bg-gradient-to-t from-black/50 to-transparent pointer-events-none z-20`}>
-        <p className="text-white text-[10px] font-medium truncate leading-tight">{item.name}</p>
-        <p className="text-white/80 text-[8px] truncate">{item.size ? (item.size / (1024 * 1024)).toFixed(1) + ' MB' : 'GLB'}</p>
+
+      <div className="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-white/90 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex justify-center">
+        <p className="text-black text-[10px] font-medium tracking-wide truncate">{item.name}</p>
       </div>
-    </button>
+    </div>
   );
 };
 
@@ -370,7 +368,7 @@ const DEMO_ITEMS: CatalogItem[] = [
     url: 'https://yswmt0em8hyvljdk.public.blob.vercel-storage.com/electronics/mechanical-keyboard-1768366050152-uB9sdebxEqtXAE5ySxGPopefn7HLBN.glb',
     type: '3d',
     category: 'electronics',
-    tags: ['keyboard', 'mechanical', 'tech'],
+    tags: ['keyboard', 'tech'],
     size: 31562137,
     metadata: { uploadedAt: '2026-01-14T12:00:00Z', colors: ['#333333'] }
   },
@@ -380,7 +378,7 @@ const DEMO_ITEMS: CatalogItem[] = [
     url: 'https://yswmt0em8hyvljdk.public.blob.vercel-storage.com/kitchen/battery-energy-drink-1768364798401-5JqO78AiCwAQm7Y1W9VT1RkcKmpzYe.glb',
     type: '3d',
     category: 'kitchen',
-    tags: ['drink', 'can', 'energy'],
+    tags: ['drink', 'energy'],
     size: 4089446,
     metadata: { uploadedAt: '2026-01-14T12:05:00Z', colors: ['#000000'] }
   },
@@ -390,7 +388,7 @@ const DEMO_ITEMS: CatalogItem[] = [
     url: 'https://yswmt0em8hyvljdk.public.blob.vercel-storage.com/personal/camel-cigarette-pack-1768363441889-J5EEUIgRekBSD0oIuJEfMrKkQjw90u.glb',
     type: '3d',
     category: 'personal',
-    tags: ['cigarettes', 'camel', 'pack'],
+    tags: ['cigarettes'],
     size: 4823449,
     metadata: { uploadedAt: '2026-01-14T12:10:00Z', colors: ['#C4A484'] }
   },
@@ -400,20 +398,18 @@ const DEMO_ITEMS: CatalogItem[] = [
     url: 'https://yswmt0em8hyvljdk.public.blob.vercel-storage.com/toys/man-bobblehead-figurine-1768365190007-S7dL4VU4sbK0jul3l6ZEhSZwjTaOyu.glb',
     type: '3d',
     category: 'toys',
-    tags: ['figurine', 'bobblehead', 'toy'],
+    tags: ['figurine', 'toy'],
     size: 2516582,
     metadata: { uploadedAt: '2026-01-14T12:20:00Z', colors: ['#FFD700'] }
   }
 ];
 
-export default function App() {
+export default function Page() {
   const [items, setItems] = useState<CatalogItem[]>([]);
   const [selectedItem, setSelectedItem] = useState<CatalogItem | null>(null);
   const [gridSize, setGridSize] = useState<GridSize>('medium');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
-  const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
 
   const getNameFromPath = (path: string) => {
       const parts = path.split('/');
@@ -427,9 +423,9 @@ export default function App() {
       return 'uncategorized';
   };
 
-  const fetchData = async () => {
+  useEffect(() => {
+    const fetchData = async () => {
         setLoading(true);
-        setError(null);
         try {
             const response = await fetch('https://blob.vercel-storage.com?mode=expanded', {
                 method: 'GET',
@@ -470,21 +466,21 @@ export default function App() {
                     });
                     setItems(catalogItems);
                 } else {
-                    if (DEMO_ITEMS.length > 0) setItems(DEMO_ITEMS);
-                    else setItems([]);
+                    setItems(DEMO_ITEMS);
                 }
             } else {
                 throw new Error(`API returned ${response.status}`);
             }
-        } catch (e: any) {
-            console.warn("Failed to load catalog, using demo data.", e);
+        } catch (e: unknown) {
+            console.warn("Using demo data.", e);
             setItems(DEMO_ITEMS);
         } finally {
             setLoading(false);
         }
     };
-
-  useEffect(() => { fetchData(); }, []);
+    
+    fetchData();
+  }, []);
 
   const handleThumbnailGenerated = (id: number, url: string) => {
     setItems(prev => prev.map(item => item.id === id ? { ...item, thumbnail: url } : item));
@@ -493,19 +489,10 @@ export default function App() {
   const filteredItems = useMemo(() => {
     let filtered = [...items];
     if (selectedCategory !== 'all') filtered = filtered.filter(item => item.category === selectedCategory);
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      filtered = filtered.filter(item => item.name.toLowerCase().includes(q) || item.tags.some(t => t.toLowerCase().includes(q)));
-    }
     return filtered;
-  }, [items, selectedCategory, searchQuery]);
+  }, [items, selectedCategory]);
 
   const categories = useMemo(() => ['all', ...Array.from(new Set(items.map(i => i.category)))], [items]);
-  const allTags = useMemo(() => {
-      const tags = new Set<string>();
-      items.forEach(item => item.tags.forEach(t => tags.add(t)));
-      return ['all', ...Array.from(tags)];
-  }, [items]);
 
   const sizes: GridSize[] = ['xs', 'sm', 'medium', 'large'];
   const cycleGridSize = () => {
@@ -514,88 +501,62 @@ export default function App() {
   };
 
   const gridStyles = {
-    xs: { gridTemplateColumns: 'repeat(auto-fill, minmax(60px, 1fr))', gap: '4px' },
-    sm: { gridTemplateColumns: 'repeat(auto-fill, minmax(90px, 1fr))', gap: '6px' },
-    medium: { gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '8px' },
-    large: { gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '12px' }
+    xs: { gridTemplateColumns: 'repeat(auto-fill, minmax(80px, 1fr))', gap: '8px' },
+    sm: { gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: '12px' },
+    medium: { gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '16px' },
+    large: { gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '20px' }
   };
 
   return (
-    <div className="min-h-screen bg-[#f8f8f8] text-[#1a1a1a] font-sans">
-      <header className="sticky top-0 z-30 bg-[#f8f8f8] border-b border-[#e5e5e5]">
-        <div className="px-4 py-3">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium tracking-tight flex items-center gap-2">katalog</span>
-            <span className="text-[11px] text-gray-400 font-mono">{filteredItems.length} / {items.length} items</span>
+    <div className="min-h-screen bg-[#fafafa] text-[#1a1a1a] font-sans selection:bg-black selection:text-white">
+      {/* Header */}
+      <header className="sticky top-0 z-40 bg-[#fafafa]/80 backdrop-blur-xl border-b border-gray-100 transition-all duration-200">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4">
+          <div className="flex items-center justify-end mb-4">
+            <div className="flex items-center gap-3">
+                 <button onClick={cycleGridSize} className="hidden sm:flex items-center justify-center w-8 h-8 rounded-full hover:bg-gray-100 transition-colors">
+                    <Maximize2 size={16} className="text-gray-600"/>
+                 </button>
+                 <div className="text-xs font-mono text-gray-400 bg-gray-100 px-2 py-1 rounded-full">
+                    {filteredItems.length}
+                 </div>
+            </div>
           </div>
-          <div className="flex items-center gap-x-3 gap-y-1 text-[11px] flex-wrap mb-2">
-            <span className="text-gray-400">Filter:</span>
-            {categories.map((cat, i) => (
-              <React.Fragment key={cat}>
-                <button
-                  onClick={() => setSelectedCategory(cat)}
-                  className={`hover:text-black transition-colors ${selectedCategory === cat ? 'font-medium text-black underline underline-offset-2' : 'text-gray-500'}`}
-                >
-                  {cat === 'all' ? 'All' : cat.split('/').pop()}
-                </button>
-                {i < categories.length - 1 && <span className="text-gray-300">|</span>}
-              </React.Fragment>
+          
+          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
+            {categories.map((cat) => (
+              <button
+                key={cat}
+                onClick={() => setSelectedCategory(cat)}
+                className={`
+                    px-3 py-1.5 text-xs font-medium transition-all duration-200 whitespace-nowrap bg-transparent
+                    ${selectedCategory === cat 
+                        ? 'text-black opacity-100 font-semibold' 
+                        : 'text-gray-500 opacity-60 hover:opacity-100 hover:text-black'}
+                `}
+              >
+                {cat === 'all' ? 'All' : cat.split('/').pop()}
+              </button>
             ))}
-            <button onClick={cycleGridSize} className="ml-auto hover:text-black text-gray-500 underline underline-offset-2">Size: {gridSize}</button>
-          </div>
-        </div>
-        <div className="px-4 pb-3">
-          <div className="relative">
-             <input
-                type="text"
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                placeholder="Search objects..."
-                className="w-full px-3 py-2 text-xs bg-white border border-[#e5e5e5] rounded-lg outline-none focus:border-black transition-colors"
-             />
-             {searchQuery && (
-                 <button onClick={() => setSearchQuery('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-black"><X size={12}/></button>
-             )}
           </div>
         </div>
       </header>
 
-      <div className="flex gap-2 px-4 py-2 overflow-x-auto no-scrollbar border-b border-transparent">
-        {allTags.slice(0, 10).map(tag => (
-          <button
-            key={tag}
-            onClick={() => setSearchQuery(tag === 'all' ? '' : tag)}
-            className={`
-                flex-shrink-0 px-3 py-1 text-[10px] rounded-full border transition-colors
-                ${(tag === 'all' && !searchQuery) || searchQuery === tag ? 'bg-[#1a1a1a] text-white border-[#1a1a1a]' : 'bg-white text-[#1a1a1a] border-[#e5e5e5] hover:border-gray-400'}
-            `}
-          >
-            {tag === 'all' ? 'Show All' : `#${tag}`}
-          </button>
-        ))}
-      </div>
-
-      <main className="p-3 md:p-4 pb-20">
+      {/* Main Content */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 pb-12">
         {loading ? (
-             <div className="flex flex-col items-center justify-center py-20 text-gray-400">
-                <Loader2 className="w-5 h-5 animate-spin mb-3 opacity-50"/>
-                <p className="text-xs">Loading items...</p>
+             <div className="flex flex-col items-center justify-center py-32 text-gray-300">
+                <Loader2 className="w-8 h-8 animate-spin mb-4 text-black/10"/>
+                <p className="text-xs font-medium uppercase tracking-widest opacity-50">Loading Assets</p>
              </div>
-        ) : error ? (
-            <div className="flex flex-col items-center justify-center py-20 max-w-sm mx-auto text-center">
-                <AlertTriangle className="w-8 h-8 text-amber-500 mb-3 opacity-80"/>
-                <p className="text-sm font-medium mb-1">Connection Issue</p>
-                <p className="text-xs text-gray-500 mb-4">{error}</p>
-                <button onClick={fetchData} className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-md hover:bg-gray-50 text-xs"><RefreshCw size={12}/> Retry</button>
-            </div>
         ) : filteredItems.length === 0 ? (
-           <div className="flex flex-col items-center justify-center py-20 text-gray-400">
-              <Search className="w-6 h-6 mb-2 opacity-50"/>
-              <p className="text-xs">No objects found</p>
-              <button onClick={() => {setSearchQuery(''); setSelectedCategory('all');}} className="mt-2 text-xs text-black underline">Clear filters</button>
+           <div className="flex flex-col items-center justify-center py-32 text-gray-300">
+              <Box className="w-12 h-12 mb-4 opacity-20"/>
+              <p className="text-sm font-medium text-gray-400">No objects found</p>
+              <button onClick={() => setSelectedCategory('all')} className="mt-4 text-xs font-semibold text-black border-b border-black pb-0.5 hover:opacity-70 transition-opacity">Reset Filters</button>
            </div>
         ) : (
-          <div style={{ display: 'grid', ...gridStyles[gridSize] }} className="w-full">
+          <div style={{ display: 'grid', ...gridStyles[gridSize] }} className="w-full animate-in fade-in slide-in-from-bottom-4 duration-500">
             {filteredItems.map((item) => (
               <GridItem key={item.id} item={item} onClick={setSelectedItem} onThumbnailGenerated={handleThumbnailGenerated} />
             ))}
