@@ -36,14 +36,18 @@ export async function POST(request: Request) {
 ${JSON.stringify(materials, null, 2)}
 
 Based on the image and material data, please provide:
-1. A list of 5-8 descriptive tags for cataloging (single words or short phrases)
-2. Identify the primary materials visible (wood, metal, plastic, fabric, ceramic, glass, etc.)
-3. Describe the dominant colors (use simple color names)
-4. Suggest the best category from this list: ${CATEGORIES.join(', ')}
-5. A brief one-sentence description
+1. A suggested name for this object (short, descriptive, 1-3 words)
+2. Estimate the real-world height of this object in millimeters (mm). Use common sense for typical objects.
+3. A list of 5-8 descriptive tags for cataloging (single words or short phrases)
+4. Identify the primary materials visible (wood, metal, plastic, fabric, ceramic, glass, etc.)
+5. Describe the dominant colors (use simple color names)
+6. Suggest the best category from this list: ${CATEGORIES.join(', ')}
+7. A brief one-sentence description
 
 Respond ONLY with valid JSON in this exact format, no markdown:
 {
+  "name": "Object Name",
+  "heightMm": 450,
   "tags": ["tag1", "tag2"],
   "materials": ["material1", "material2"],
   "colors": ["red", "blue"],
@@ -52,7 +56,7 @@ Respond ONLY with valid JSON in this exact format, no markdown:
 }`;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-2.0-flash-exp',
+      model: 'gemini-2.5-flash-preview-05-20',
       contents: [
         {
           role: 'user',

@@ -4,6 +4,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { upload } from '@vercel/blob/client';
 
@@ -20,22 +21,40 @@ interface UploadedBlob {
   pathname: string;
 }
 
+interface CatalogItem {
+  id: number;
+  name: string;
+  url: string;
+  type: string;
+  category: string;
+  tags: string[];
+  metadata: {
+    materials?: MaterialInfo[];
+    colors?: string[];
+    targetHeight?: number | null;
+    scaleFactor?: number | null;
+    description?: string;
+    uploadedAt?: string;
+  };
+}
+
 const CATEGORIES = [
-  { value: 'furniture/chairs', label: '🪑 Chairs', group: 'Furniture' },
-  { value: 'furniture/tables', label: '🪑 Tables', group: 'Furniture' },
-  { value: 'furniture/lamps', label: '💡 Lamps', group: 'Furniture' },
-  { value: 'furniture/storage', label: '🗄️ Storage', group: 'Furniture' },
-  { value: 'electronics', label: '📱 Electronics', group: 'Items' },
-  { value: 'kitchen', label: '🍳 Kitchen', group: 'Items' },
-  { value: 'clothing', label: '👕 Clothing', group: 'Items' },
-  { value: 'toys', label: '🧸 Toys', group: 'Items' },
-  { value: 'tools', label: '🔧 Tools', group: 'Items' },
-  { value: 'art', label: '🎨 Art & Decor', group: 'Items' },
-  { value: 'personal', label: '👤 Personal', group: 'Items' },
-  { value: 'misc', label: '📦 Miscellaneous', group: 'Items' },
+  { value: 'furniture/chairs', label: 'Chairs', group: 'Furniture' },
+  { value: 'furniture/tables', label: 'Tables', group: 'Furniture' },
+  { value: 'furniture/lamps', label: 'Lamps', group: 'Furniture' },
+  { value: 'furniture/storage', label: 'Storage', group: 'Furniture' },
+  { value: 'electronics', label: 'Electronics', group: 'Items' },
+  { value: 'kitchen', label: 'Kitchen', group: 'Items' },
+  { value: 'clothing', label: 'Clothing', group: 'Items' },
+  { value: 'toys', label: 'Toys', group: 'Items' },
+  { value: 'tools', label: 'Tools', group: 'Items' },
+  { value: 'art', label: 'Art & Decor', group: 'Items' },
+  { value: 'personal', label: 'Personal', group: 'Items' },
+  { value: 'misc', label: 'Miscellaneous', group: 'Items' },
 ];
 
 export default function UploadPortal() {
+  const [activeTab, setActiveTab] = useState<'upload' | 'browse'>('upload');
   const [file, setFile] = useState<File | null>(null);
   const [objectName, setObjectName] = useState('');
   const [targetHeight, setTargetHeight] = useState<number | ''>('');
@@ -58,11 +77,17 @@ export default function UploadPortal() {
   } | null>(null);
   const [scaleFactor, setScaleFactor] = useState<number | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [transformMode, setTransformMode] = useState<'translate' | 'rotate'>('rotate');
+  const [catalogItems, setCatalogItems] = useState<CatalogItem[]>([]);
+  const [editingItem, setEditingItem] = useState<CatalogItem | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const modelRef = useRef<THREE.Group | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const orbitControlsRef = useRef<OrbitControls | null>(null);
+  const transformControlsRef = useRef<TransformControls | null>(null);
   const originalBBoxRef = useRef<THREE.Box3 | null>(null);
 
   const extractMaterials = useCallback((model: THREE.Group) => {
@@ -106,9 +131,31 @@ export default function UploadPortal() {
     setColors(cols);
   }, []);
 
+  // Load catalog items from localStorage
+  useEffect(() => {
+    const loadItems = () => {
+      const existing = JSON.parse(localStorage.getItem('katalog-config') || '{"items":[]}');
+      setCatalogItems(existing.items || []);
+    };
+    loadItems();
+    window.addEventListener('storage', loadItems);
+    return () => window.removeEventListener('storage', loadItems);
+  }, []);
+
+  // Snap model bottom to ground
+  const snapToGround = useCallback((model: THREE.Group) => {
+    const box = new THREE.Box3().setFromObject(model);
+    const minY = box.min.y;
+    model.position.y -= minY;
+  }, []);
+
   const initPreview = useCallback((arrayBuffer: ArrayBuffer) => {
     if (!containerRef.current) return;
 
+    // Cleanup existing
+    if (transformControlsRef.current) {
+      transformControlsRef.current.dispose();
+    }
     if (rendererRef.current) {
       rendererRef.current.dispose();
     }
@@ -123,24 +170,47 @@ export default function UploadPortal() {
 
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.001, 1000);
     camera.position.set(2, 2, 2);
+    cameraRef.current = camera;
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.0;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     containerRef.current.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
+    const orbitControls = new OrbitControls(camera, renderer.domElement);
+    orbitControls.enableDamping = true;
+    orbitControlsRef.current = orbitControls;
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-    const keyLight = new THREE.DirectionalLight(0xffffff, 1);
-    keyLight.position.set(5, 5, 5);
+    // Two physical lights for realistic shading (no env map)
+    const keyLight = new THREE.DirectionalLight(0xffffff, 2.5);
+    keyLight.position.set(5, 8, 5);
+    keyLight.castShadow = true;
+    keyLight.shadow.mapSize.width = 1024;
+    keyLight.shadow.mapSize.height = 1024;
     scene.add(keyLight);
-    const fillLight = new THREE.DirectionalLight(0xffffff, 0.3);
-    fillLight.position.set(-5, 0, -5);
+
+    const fillLight = new THREE.DirectionalLight(0xfff5e6, 1.0);
+    fillLight.position.set(-4, 3, -3);
     scene.add(fillLight);
+
+    // Ground plane for shadows
+    const groundGeometry = new THREE.PlaneGeometry(20, 20);
+    const groundMaterial = new THREE.ShadowMaterial({ opacity: 0.3 });
+    const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = 0;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    // Grid helper
+    const gridHelper = new THREE.GridHelper(4, 20, 0x333333, 0x222222);
+    scene.add(gridHelper);
 
     const loader = new GLTFLoader();
     const blob = new Blob([arrayBuffer]);
@@ -150,19 +220,47 @@ export default function UploadPortal() {
       const model = gltf.scene;
       modelRef.current = model;
 
+      // Enable shadows on all meshes
+      model.traverse((node) => {
+        if ((node as THREE.Mesh).isMesh) {
+          (node as THREE.Mesh).castShadow = true;
+          (node as THREE.Mesh).receiveShadow = true;
+        }
+      });
+
       const box = new THREE.Box3().setFromObject(model);
       originalBBoxRef.current = box.clone();
       const center = box.getCenter(new THREE.Vector3());
       const size = box.getSize(new THREE.Vector3());
 
-      model.position.sub(center);
+      // Center horizontally, snap bottom to ground
+      model.position.set(-center.x, -box.min.y, -center.z);
 
       const maxDim = Math.max(size.x, size.y, size.z);
       const scale = 2 / maxDim;
       model.scale.setScalar(scale);
 
+      // Re-snap after scaling
+      snapToGround(model);
+
       scene.add(model);
       extractMaterials(model);
+
+      // Setup transform controls
+      const transformControls = new TransformControls(camera, renderer.domElement);
+      transformControls.attach(model);
+      transformControls.setMode('rotate');
+      scene.add(transformControls);
+      transformControlsRef.current = transformControls;
+
+      // Disable orbit controls while dragging transform
+      transformControls.addEventListener('dragging-changed', (event) => {
+        orbitControls.enabled = !event.value;
+        if (!event.value) {
+          // Snap to ground after transform
+          snapToGround(model);
+        }
+      });
 
       let triangles = 0;
       const matSet = new Set<string>();
@@ -196,11 +294,18 @@ export default function UploadPortal() {
 
     const animate = () => {
       requestAnimationFrame(animate);
-      controls.update();
+      orbitControls.update();
       renderer.render(scene, camera);
     };
     animate();
-  }, [extractMaterials]);
+  }, [extractMaterials, snapToGround]);
+
+  // Update transform mode
+  useEffect(() => {
+    if (transformControlsRef.current) {
+      transformControlsRef.current.setMode(transformMode);
+    }
+  }, [transformMode]);
 
   const handleFile = useCallback((f: File) => {
     setFile(f);
@@ -240,7 +345,22 @@ export default function UploadPortal() {
     setIsAnalyzing(true);
 
     try {
+      // Temporarily hide transform controls for clean screenshot
+      if (transformControlsRef.current) {
+        transformControlsRef.current.visible = false;
+      }
+      
+      // Render a frame without controls
+      if (rendererRef.current && sceneRef.current && cameraRef.current) {
+        rendererRef.current.render(sceneRef.current, cameraRef.current);
+      }
+
       const screenshot = rendererRef.current.domElement.toDataURL('image/png').split(',')[1];
+
+      // Restore transform controls
+      if (transformControlsRef.current) {
+        transformControlsRef.current.visible = true;
+      }
 
       const response = await fetch('/api/analyze', {
         method: 'POST',
@@ -259,6 +379,14 @@ export default function UploadPortal() {
 
       const data = await response.json();
 
+      // Auto-set name if suggested
+      if (data.name) {
+        setObjectName(data.name);
+      }
+      // Auto-set height if suggested
+      if (data.heightMm && typeof data.heightMm === 'number') {
+        setTargetHeight(data.heightMm);
+      }
       if (data.tags) {
         setTags((prev) => Array.from(new Set([...prev, ...data.tags])));
       }
@@ -282,28 +410,41 @@ export default function UploadPortal() {
     setUploadProgress(10);
 
     try {
-      let uploadBlob: Blob;
+      setUploadProgress(20);
 
+      // Clone and bake in transform (position as origin, rotation applied)
+      const exportScene = modelRef.current.clone();
+      
+      // Apply current transformation to geometry
+      exportScene.updateMatrixWorld(true);
+      exportScene.traverse((node) => {
+        if ((node as THREE.Mesh).isMesh) {
+          const mesh = node as THREE.Mesh;
+          mesh.geometry = mesh.geometry.clone();
+          mesh.geometry.applyMatrix4(mesh.matrixWorld);
+          mesh.position.set(0, 0, 0);
+          mesh.rotation.set(0, 0, 0);
+          mesh.scale.set(1, 1, 1);
+          mesh.updateMatrix();
+        }
+      });
+
+      // Apply scale factor if set
       if (scaleFactor && originalBBoxRef.current) {
-        setUploadProgress(20);
-
-        const exportScene = modelRef.current.clone();
         exportScene.scale.setScalar(scaleFactor);
-
-        const exporter = new GLTFExporter();
-        const glb = await new Promise<ArrayBuffer>((resolve, reject) => {
-          exporter.parse(
-            exportScene,
-            (result) => resolve(result as ArrayBuffer),
-            (error) => reject(error),
-            { binary: true }
-          );
-        });
-
-        uploadBlob = new Blob([glb], { type: 'model/gltf-binary' });
-      } else {
-        uploadBlob = file;
       }
+
+      const exporter = new GLTFExporter();
+      const glb = await new Promise<ArrayBuffer>((resolve, reject) => {
+        exporter.parse(
+          exportScene,
+          (result) => resolve(result as ArrayBuffer),
+          (error) => reject(error),
+          { binary: true }
+        );
+      });
+
+      const uploadBlob = new Blob([glb], { type: 'model/gltf-binary' });
 
       setUploadProgress(40);
 
@@ -326,7 +467,7 @@ export default function UploadPortal() {
       setUploadProgress(100);
       setUploadResult({ url: result.url, pathname: result.pathname });
 
-      const catalogItem = {
+      const catalogItem: CatalogItem = {
         id: Date.now(),
         name: objectName || 'Unnamed',
         url: result.url,
@@ -346,6 +487,7 @@ export default function UploadPortal() {
       const existing = JSON.parse(localStorage.getItem('katalog-config') || '{"items":[]}');
       existing.items.push(catalogItem);
       localStorage.setItem('katalog-config', JSON.stringify(existing));
+      setCatalogItems(existing.items);
 
     } catch (err) {
       console.error('Upload error:', err);
@@ -361,199 +503,390 @@ export default function UploadPortal() {
     return acc;
   }, {} as Record<string, typeof CATEGORIES>);
 
+  // Delete item from catalog
+  const deleteItem = (id: number) => {
+    const existing = JSON.parse(localStorage.getItem('katalog-config') || '{"items":[]}');
+    existing.items = existing.items.filter((item: CatalogItem) => item.id !== id);
+    localStorage.setItem('katalog-config', JSON.stringify(existing));
+    setCatalogItems(existing.items);
+    setEditingItem(null);
+  };
+
+  // Update item in catalog
+  const updateItem = (updatedItem: CatalogItem) => {
+    const existing = JSON.parse(localStorage.getItem('katalog-config') || '{"items":[]}');
+    existing.items = existing.items.map((item: CatalogItem) => 
+      item.id === updatedItem.id ? updatedItem : item
+    );
+    localStorage.setItem('katalog-config', JSON.stringify(existing));
+    setCatalogItems(existing.items);
+    setEditingItem(null);
+  };
+
   return (
     <div className="min-h-screen bg-black text-white">
       <header className="border-b border-neutral-800 px-6 py-4 flex justify-between items-center">
         <div className="font-mono text-xs tracking-widest">
-          KATALOG <span className="text-neutral-500 ml-2">Upload</span>
+          KATALOG
+        </div>
+        <div className="flex gap-4">
+          <button
+            onClick={() => setActiveTab('upload')}
+            className={`text-xs transition ${activeTab === 'upload' ? 'text-white' : 'text-neutral-500 hover:text-white'}`}
+          >
+            Upload
+          </button>
+          <button
+            onClick={() => setActiveTab('browse')}
+            className={`text-xs transition ${activeTab === 'browse' ? 'text-white' : 'text-neutral-500 hover:text-white'}`}
+          >
+            Browse
+          </button>
         </div>
         <a href="https://katalog.iverfinne.no" className="text-xs text-neutral-500 hover:text-white transition">
-          ← Back
+          Back
         </a>
       </header>
 
-      <main className="max-w-6xl mx-auto p-6 grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-6">
-        <div className="space-y-4">
-          <div
-            className={`bg-neutral-900 border rounded-lg p-8 text-center cursor-pointer transition-all
-              ${dragOver ? 'border-blue-500 bg-blue-500/5' : 'border-neutral-800'}
-              ${file ? 'border-green-500/50 bg-green-500/5' : 'border-dashed'}`}
-            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={(e) => {
-              e.preventDefault();
-              setDragOver(false);
-              const f = e.dataTransfer.files[0];
-              if (f && (f.name.endsWith('.glb') || f.name.endsWith('.gltf'))) {
-                handleFile(f);
-              }
-            }}
-            onClick={() => document.getElementById('fileInput')?.click()}
-          >
-            <div className="text-3xl mb-3 opacity-30">{file ? '✓' : '↑'}</div>
-            <p className="font-mono text-xs text-neutral-400">
-              {file ? file.name : 'Drop GLB/GLTF'}
-            </p>
-            {file && <p className="text-xs text-neutral-600 mt-1">{(file.size / 1024 / 1024).toFixed(1)} MB</p>}
-            <input
-              id="fileInput"
-              type="file"
-              accept=".glb,.gltf"
-              className="hidden"
-              onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
-            />
-          </div>
-
-          {file && (
+      {activeTab === 'upload' ? (
+        <main className="max-w-6xl mx-auto p-6 grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-6">
+          <div className="space-y-4">
             <div
-              ref={containerRef}
-              className="bg-neutral-900 rounded-lg aspect-video overflow-hidden border border-neutral-800"
-            />
-          )}
-
-          {aiDescription && (
-            <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg">
-              <p className="text-xs text-blue-300">{aiDescription}</p>
-            </div>
-          )}
-        </div>
-
-        <div className="space-y-3">
-          {modelStats && (
-            <div className="grid grid-cols-2 gap-2">
-              <div className="bg-neutral-900 border border-neutral-800 rounded-lg p-3 text-center">
-                <div className="font-mono text-sm">{modelStats.triangles.toLocaleString()}</div>
-                <div className="text-[10px] text-neutral-500 mt-0.5">tris</div>
-              </div>
-              <div className="bg-neutral-900 border border-neutral-800 rounded-lg p-3 text-center">
-                <div className="font-mono text-sm">{modelStats.materials}</div>
-                <div className="text-[10px] text-neutral-500 mt-0.5">mats</div>
-              </div>
-            </div>
-          )}
-
-          <div className="bg-neutral-900 border border-neutral-800 rounded-lg p-4 space-y-3">
-            <input
-              type="text"
-              value={objectName}
-              onChange={(e) => setObjectName(e.target.value)}
-              placeholder="Name"
-              className="w-full px-3 py-2 bg-black border border-neutral-800 rounded text-sm focus:outline-none focus:border-neutral-600"
-            />
-            <select
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
-              className="w-full px-3 py-2 bg-black border border-neutral-800 rounded text-sm focus:outline-none focus:border-neutral-600"
+              className={`bg-neutral-900 border rounded-lg p-8 text-center cursor-pointer transition-all
+                ${dragOver ? 'border-blue-500 bg-blue-500/5' : 'border-neutral-800'}
+                ${file ? 'border-green-500/50 bg-green-500/5' : 'border-dashed'}`}
+              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragOver(false);
+                const f = e.dataTransfer.files[0];
+                if (f && (f.name.endsWith('.glb') || f.name.endsWith('.gltf'))) {
+                  handleFile(f);
+                }
+              }}
+              onClick={() => document.getElementById('fileInput')?.click()}
             >
-              {Object.entries(groupedCategories).map(([group, cats]) => (
-                <optgroup key={group} label={group}>
-                  {cats.map((cat) => (
-                    <option key={cat.value} value={cat.value}>
-                      {cat.label}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
-          </div>
-
-          <div className="bg-neutral-900 border border-neutral-800 rounded-lg p-4">
-            <div className="flex gap-2">
+              <p className="font-mono text-xs text-neutral-400">
+                {file ? file.name : 'Drop GLB/GLTF'}
+              </p>
+              {file && <p className="text-xs text-neutral-600 mt-1">{(file.size / 1024 / 1024).toFixed(1)} MB</p>}
               <input
-                type="number"
-                value={targetHeight}
-                onChange={(e) => setTargetHeight(e.target.value ? Number(e.target.value) : '')}
-                placeholder="Height"
-                className="flex-1 px-3 py-2 bg-black border border-neutral-800 rounded text-sm focus:outline-none focus:border-neutral-600"
+                id="fileInput"
+                type="file"
+                accept=".glb,.gltf"
+                className="hidden"
+                onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
               />
-              <span className="px-3 py-2 bg-neutral-800 rounded text-xs text-neutral-400">mm</span>
             </div>
-            {scaleFactor && (
-              <div className="mt-2 text-xs text-amber-400 font-mono">{scaleFactor.toFixed(4)}×</div>
-            )}
-          </div>
 
-          <div className="bg-neutral-900 border border-neutral-800 rounded-lg p-4">
-            <input
-              type="text"
-              value={tagInput}
-              onChange={(e) => setTagInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && addTag(tagInput)}
-              placeholder="Add tag..."
-              className="w-full px-3 py-2 bg-black border border-neutral-800 rounded text-sm focus:outline-none focus:border-neutral-600"
-            />
-            {tags.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 mt-2">
-                {tags.map((tag, i) => (
-                  <span key={i} className="bg-neutral-800 px-2 py-1 rounded text-xs flex items-center gap-1.5">
-                    {tag}
-                    <button onClick={() => setTags(tags.filter((_, j) => j !== i))} className="text-neutral-500 hover:text-white">×</button>
-                  </span>
-                ))}
+            {file && (
+              <div className="relative">
+                <div
+                  ref={containerRef}
+                  className="bg-neutral-900 rounded-lg aspect-video overflow-hidden border border-neutral-800"
+                />
+                {/* Transform mode buttons */}
+                <div className="absolute bottom-3 left-3 flex gap-2">
+                  <button
+                    onClick={() => setTransformMode('rotate')}
+                    className={`px-3 py-1.5 text-xs rounded transition ${
+                      transformMode === 'rotate' 
+                        ? 'bg-white text-black' 
+                        : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
+                    }`}
+                  >
+                    Rotate
+                  </button>
+                  <button
+                    onClick={() => setTransformMode('translate')}
+                    className={`px-3 py-1.5 text-xs rounded transition ${
+                      transformMode === 'translate' 
+                        ? 'bg-white text-black' 
+                        : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
+                    }`}
+                  >
+                    Move
+                  </button>
+                </div>
+                {/* Camera capture button */}
+                <button
+                  onClick={analyzeWithAI}
+                  disabled={isAnalyzing}
+                  className="absolute top-3 right-3 p-2 bg-neutral-800/80 hover:bg-neutral-700 rounded transition disabled:opacity-50"
+                  title="Capture and analyze with AI"
+                >
+                  {isAnalyzing ? (
+                    <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                  ) : (
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                  )}
+                </button>
+              </div>
+            )}
+
+            {aiDescription && (
+              <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg">
+                <p className="text-xs text-blue-300">{aiDescription}</p>
               </div>
             )}
           </div>
 
-          <button
-            onClick={analyzeWithAI}
-            disabled={!file || isAnalyzing}
-            className="w-full py-2.5 bg-neutral-900 border border-neutral-800 text-sm rounded-lg hover:bg-neutral-800 disabled:opacity-40 transition"
-          >
-            {isAnalyzing ? 'Analyzing...' : '✨ AI Analyze'}
-          </button>
-
-          {(materials.length > 0 || colors.length > 0) && (
-            <div className="bg-neutral-900 border border-neutral-800 rounded-lg p-4">
-              {colors.length > 0 && (
-                <div className="flex gap-1.5 mb-3">
-                  {colors.slice(0, 6).map((color, i) => (
-                    <div key={i} className="w-6 h-6 rounded border border-neutral-700" style={{ backgroundColor: color }} title={color} />
-                  ))}
+          <div className="space-y-3">
+            {modelStats && (
+              <div className="grid grid-cols-2 gap-2">
+                <div className="bg-neutral-900 border border-neutral-800 rounded-lg p-3 text-center">
+                  <div className="font-mono text-sm">{modelStats.triangles.toLocaleString()}</div>
+                  <div className="text-[10px] text-neutral-500 mt-0.5">tris</div>
                 </div>
-              )}
-              {materials.length > 0 && (
-                <div className="grid grid-cols-2 gap-1.5">
-                  {materials.slice(0, 4).map((mat, i) => (
-                    <div key={i} className="flex items-center gap-2 p-1.5 bg-black rounded">
-                      <div className="w-5 h-5 rounded" style={{ backgroundColor: mat.color }} />
-                      <span className="text-[10px] text-neutral-400 truncate">{mat.name}</span>
-                    </div>
-                  ))}
+                <div className="bg-neutral-900 border border-neutral-800 rounded-lg p-3 text-center">
+                  <div className="font-mono text-sm">{modelStats.materials}</div>
+                  <div className="text-[10px] text-neutral-500 mt-0.5">mats</div>
                 </div>
-              )}
-            </div>
-          )}
+              </div>
+            )}
 
-          <button
-            onClick={handleUpload}
-            disabled={!file || isUploading}
-            className={`w-full py-3 rounded-lg font-medium text-sm transition-all
-              ${uploadResult 
-                ? 'bg-green-600 text-white' 
-                : 'bg-white text-black hover:bg-neutral-200 disabled:bg-neutral-800 disabled:text-neutral-500'}`}
-          >
-            {isUploading ? 'Uploading...' : uploadResult ? '✓ Done' : 'Upload'}
-          </button>
-
-          {isUploading && (
-            <div className="h-1 bg-neutral-800 rounded overflow-hidden">
-              <div className="h-full bg-blue-500 transition-all" style={{ width: `${uploadProgress}%` }} />
-            </div>
-          )}
-
-          {uploadResult && (
-            <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-3">
-              <div className="font-mono text-[10px] text-green-400 break-all">{uploadResult.url}</div>
-              <button
-                onClick={() => navigator.clipboard.writeText(uploadResult.url)}
-                className="mt-2 text-xs text-green-300 hover:text-green-200"
+            <div className="bg-neutral-900 border border-neutral-800 rounded-lg p-4 space-y-3">
+              <input
+                type="text"
+                value={objectName}
+                onChange={(e) => setObjectName(e.target.value)}
+                placeholder="Name"
+                className="w-full px-3 py-2 bg-black border border-neutral-800 rounded text-sm focus:outline-none focus:border-neutral-600"
+              />
+              <select
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                className="w-full px-3 py-2 bg-black border border-neutral-800 rounded text-sm focus:outline-none focus:border-neutral-600"
               >
-                Copy URL
+                {Object.entries(groupedCategories).map(([group, cats]) => (
+                  <optgroup key={group} label={group}>
+                    {cats.map((cat) => (
+                      <option key={cat.value} value={cat.value}>
+                        {cat.label}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </div>
+
+            <div className="bg-neutral-900 border border-neutral-800 rounded-lg p-4">
+              <div className="flex gap-2">
+                <input
+                  type="number"
+                  value={targetHeight}
+                  onChange={(e) => setTargetHeight(e.target.value ? Number(e.target.value) : '')}
+                  placeholder="Height"
+                  className="flex-1 px-3 py-2 bg-black border border-neutral-800 rounded text-sm focus:outline-none focus:border-neutral-600"
+                />
+                <span className="px-3 py-2 bg-neutral-800 rounded text-xs text-neutral-400">mm</span>
+              </div>
+              {scaleFactor && (
+                <div className="mt-2 text-xs text-amber-400 font-mono">{scaleFactor.toFixed(4)}x</div>
+              )}
+            </div>
+
+            <div className="bg-neutral-900 border border-neutral-800 rounded-lg p-4">
+              <input
+                type="text"
+                value={tagInput}
+                onChange={(e) => setTagInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && addTag(tagInput)}
+                placeholder="Add tag..."
+                className="w-full px-3 py-2 bg-black border border-neutral-800 rounded text-sm focus:outline-none focus:border-neutral-600"
+              />
+              {tags.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {tags.map((tag, i) => (
+                    <span key={i} className="bg-neutral-800 px-2 py-1 rounded text-xs flex items-center gap-1.5">
+                      {tag}
+                      <button onClick={() => setTags(tags.filter((_, j) => j !== i))} className="text-neutral-500 hover:text-white">x</button>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {(materials.length > 0 || colors.length > 0) && (
+              <div className="bg-neutral-900 border border-neutral-800 rounded-lg p-4">
+                {colors.length > 0 && (
+                  <div className="flex gap-1.5 mb-3">
+                    {colors.slice(0, 6).map((color, i) => (
+                      <div key={i} className="w-6 h-6 rounded border border-neutral-700" style={{ backgroundColor: color }} title={color} />
+                    ))}
+                  </div>
+                )}
+                {materials.length > 0 && (
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {materials.slice(0, 4).map((mat, i) => (
+                      <div key={i} className="flex items-center gap-2 p-1.5 bg-black rounded">
+                        <div className="w-5 h-5 rounded" style={{ backgroundColor: mat.color }} />
+                        <span className="text-[10px] text-neutral-400 truncate">{mat.name}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <button
+              onClick={handleUpload}
+              disabled={!file || isUploading}
+              className={`w-full py-3 rounded-lg font-medium text-sm transition-all
+                ${uploadResult 
+                  ? 'bg-green-600 text-white' 
+                  : 'bg-white text-black hover:bg-neutral-200 disabled:bg-neutral-800 disabled:text-neutral-500'}`}
+            >
+              {isUploading ? 'Uploading...' : uploadResult ? 'Done' : 'Upload'}
+            </button>
+
+            {isUploading && (
+              <div className="h-1 bg-neutral-800 rounded overflow-hidden">
+                <div className="h-full bg-blue-500 transition-all" style={{ width: `${uploadProgress}%` }} />
+              </div>
+            )}
+
+            {uploadResult && (
+              <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-3">
+                <div className="font-mono text-[10px] text-green-400 break-all">{uploadResult.url}</div>
+                <button
+                  onClick={() => navigator.clipboard.writeText(uploadResult.url)}
+                  className="mt-2 text-xs text-green-300 hover:text-green-200"
+                >
+                  Copy URL
+                </button>
+              </div>
+            )}
+          </div>
+        </main>
+      ) : (
+        /* Browse Tab */
+        <main className="max-w-6xl mx-auto p-6">
+          <div className="mb-6 flex justify-between items-center">
+            <h2 className="font-mono text-sm text-neutral-400">Library ({catalogItems.length} items)</h2>
+          </div>
+
+          {catalogItems.length === 0 ? (
+            <div className="text-center py-16">
+              <p className="text-neutral-500 text-sm">No items in library yet</p>
+              <button 
+                onClick={() => setActiveTab('upload')}
+                className="mt-4 px-4 py-2 bg-neutral-800 rounded text-sm hover:bg-neutral-700 transition"
+              >
+                Upload your first model
               </button>
             </div>
+          ) : (
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+              {catalogItems.map((item) => (
+                <div 
+                  key={item.id} 
+                  className="bg-neutral-900 border border-neutral-800 rounded-lg overflow-hidden group"
+                >
+                  <div className="aspect-square bg-neutral-800 flex items-center justify-center">
+                    <span className="text-neutral-600 text-xs font-mono">3D</span>
+                  </div>
+                  <div className="p-3">
+                    <h3 className="font-medium text-sm truncate">{item.name}</h3>
+                    <p className="text-xs text-neutral-500 mt-1">{item.category}</p>
+                    {item.tags.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-2">
+                        {item.tags.slice(0, 3).map((tag, i) => (
+                          <span key={i} className="text-[10px] bg-neutral-800 px-1.5 py-0.5 rounded">{tag}</span>
+                        ))}
+                      </div>
+                    )}
+                    <div className="flex gap-2 mt-3">
+                      <button
+                        onClick={() => setEditingItem(item)}
+                        className="flex-1 py-1.5 text-xs bg-neutral-800 rounded hover:bg-neutral-700 transition"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => deleteItem(item.id)}
+                        className="py-1.5 px-3 text-xs bg-red-900/30 text-red-400 rounded hover:bg-red-900/50 transition"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
-        </div>
-      </main>
+
+          {/* Edit Modal */}
+          {editingItem && (
+            <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
+              <div className="bg-neutral-900 border border-neutral-800 rounded-lg p-6 w-full max-w-md">
+                <h3 className="font-mono text-sm mb-4">Edit Item</h3>
+                <div className="space-y-3">
+                  <input
+                    type="text"
+                    value={editingItem.name}
+                    onChange={(e) => setEditingItem({ ...editingItem, name: e.target.value })}
+                    placeholder="Name"
+                    className="w-full px-3 py-2 bg-black border border-neutral-800 rounded text-sm focus:outline-none focus:border-neutral-600"
+                  />
+                  <select
+                    value={editingItem.category}
+                    onChange={(e) => setEditingItem({ ...editingItem, category: e.target.value })}
+                    className="w-full px-3 py-2 bg-black border border-neutral-800 rounded text-sm focus:outline-none focus:border-neutral-600"
+                  >
+                    {Object.entries(groupedCategories).map(([group, cats]) => (
+                      <optgroup key={group} label={group}>
+                        {cats.map((cat) => (
+                          <option key={cat.value} value={cat.value}>
+                            {cat.label}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                  <div className="flex flex-wrap gap-1.5">
+                    {editingItem.tags.map((tag, i) => (
+                      <span key={i} className="bg-neutral-800 px-2 py-1 rounded text-xs flex items-center gap-1.5">
+                        {tag}
+                        <button 
+                          onClick={() => setEditingItem({ 
+                            ...editingItem, 
+                            tags: editingItem.tags.filter((_, j) => j !== i) 
+                          })} 
+                          className="text-neutral-500 hover:text-white"
+                        >
+                          x
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                  <div className="flex gap-2 mt-4">
+                    <button
+                      onClick={() => updateItem(editingItem)}
+                      className="flex-1 py-2 bg-white text-black rounded text-sm hover:bg-neutral-200 transition"
+                    >
+                      Save
+                    </button>
+                    <button
+                      onClick={() => setEditingItem(null)}
+                      className="px-4 py-2 bg-neutral-800 rounded text-sm hover:bg-neutral-700 transition"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </main>
+      )}
     </div>
   );
 }
