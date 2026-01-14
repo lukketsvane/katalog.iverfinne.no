@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
+import { upload } from '@vercel/blob/client';
 
 interface MaterialInfo {
   name: string;
@@ -284,7 +285,7 @@ export default function UploadPortal() {
       let uploadBlob: Blob;
 
       if (scaleFactor && originalBBoxRef.current) {
-        setUploadProgress(30);
+        setUploadProgress(20);
 
         const exportScene = modelRef.current.clone();
         exportScene.scale.setScalar(scaleFactor);
@@ -304,7 +305,7 @@ export default function UploadPortal() {
         uploadBlob = file;
       }
 
-      setUploadProgress(50);
+      setUploadProgress(40);
 
       const safeName = (objectName || 'model')
         .toLowerCase()
@@ -313,24 +314,17 @@ export default function UploadPortal() {
       const filename = `${safeName}-${Date.now()}.glb`;
       const pathname = `${category}/${filename}`;
 
-      const formData = new FormData();
-      formData.append('file', uploadBlob, filename);
-      formData.append('pathname', pathname);
-
-      const response = await fetch('/api/upload', {
-        method: 'POST',
-        body: formData,
+      // Use client-side upload to bypass Vercel's 4.5MB serverless function limit
+      const result = await upload(pathname, uploadBlob, {
+        access: 'public',
+        handleUploadUrl: '/api/upload/token',
+        onUploadProgress: (progress) => {
+          setUploadProgress(40 + Math.round(progress.percentage * 0.5));
+        },
       });
 
-      setUploadProgress(80);
-
-      if (!response.ok) {
-        throw new Error(`Upload failed: ${response.statusText}`);
-      }
-
-      const result = await response.json();
       setUploadProgress(100);
-      setUploadResult(result);
+      setUploadResult({ url: result.url, pathname: result.pathname });
 
       const catalogItem = {
         id: Date.now(),
@@ -368,22 +362,22 @@ export default function UploadPortal() {
   }, {} as Record<string, typeof CATEGORIES>);
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-white">
-      <header className="border-b border-gray-800 px-8 py-5 flex justify-between items-center">
-        <div className="font-mono text-sm tracking-[0.4em] font-bold">
-          K A T A L O G <span className="font-normal opacity-40 ml-4 tracking-wider text-cyan-400">Upload</span>
+    <div className="min-h-screen bg-black text-white">
+      <header className="border-b border-neutral-800 px-6 py-4 flex justify-between items-center">
+        <div className="font-mono text-xs tracking-widest">
+          KATALOG <span className="text-neutral-500 ml-2">Upload</span>
         </div>
-        <a href="https://katalog.iverfinne.no" className="text-sm opacity-50 hover:opacity-100 transition-opacity">
-          ← Back to catalog
+        <a href="https://katalog.iverfinne.no" className="text-xs text-neutral-500 hover:text-white transition">
+          ← Back
         </a>
       </header>
 
-      <main className="max-w-7xl mx-auto p-8 grid grid-cols-1 lg:grid-cols-[1fr_420px] gap-8">
-        <div>
+      <main className="max-w-6xl mx-auto p-6 grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-6">
+        <div className="space-y-4">
           <div
-            className={`bg-[#141414] border-2 border-dashed rounded-xl p-14 text-center cursor-pointer transition-all
-              ${dragOver ? 'border-cyan-500 bg-cyan-500/5' : 'border-gray-700'}
-              ${file ? 'border-solid border-emerald-500 bg-emerald-500/5' : ''}`}
+            className={`bg-neutral-900 border rounded-lg p-8 text-center cursor-pointer transition-all
+              ${dragOver ? 'border-blue-500 bg-blue-500/5' : 'border-neutral-800'}
+              ${file ? 'border-green-500/50 bg-green-500/5' : 'border-dashed'}`}
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
             onDragLeave={() => setDragOver(false)}
             onDrop={(e) => {
@@ -396,13 +390,11 @@ export default function UploadPortal() {
             }}
             onClick={() => document.getElementById('fileInput')?.click()}
           >
-            <div className="text-5xl mb-4 opacity-40">{file ? '✓' : '📦'}</div>
-            <h2 className="font-mono text-sm tracking-wider mb-2">
-              {file ? file.name : 'DROP GLB/GLTF FILE HERE'}
-            </h2>
-            <p className="text-sm opacity-50">
-              {file ? `${(file.size / 1024 / 1024).toFixed(2)} MB • Click to change` : 'or click to browse'}
+            <div className="text-3xl mb-3 opacity-30">{file ? '✓' : '↑'}</div>
+            <p className="font-mono text-xs text-neutral-400">
+              {file ? file.name : 'Drop GLB/GLTF'}
             </p>
+            {file && <p className="text-xs text-neutral-600 mt-1">{(file.size / 1024 / 1024).toFixed(1)} MB</p>}
             <input
               id="fileInput"
               type="file"
@@ -413,44 +405,45 @@ export default function UploadPortal() {
           </div>
 
           {file && (
-            <div className="mt-6">
-              <div
-                ref={containerRef}
-                className="bg-[#1a1a1a] rounded-xl aspect-[16/10] overflow-hidden border border-gray-800"
-              />
-            </div>
+            <div
+              ref={containerRef}
+              className="bg-neutral-900 rounded-lg aspect-video overflow-hidden border border-neutral-800"
+            />
           )}
 
           {aiDescription && (
-            <div className="mt-4 p-4 bg-cyan-500/10 border border-cyan-500/30 rounded-lg">
-              <p className="text-sm text-cyan-300">{aiDescription}</p>
+            <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg">
+              <p className="text-xs text-blue-300">{aiDescription}</p>
             </div>
           )}
         </div>
 
-        <div className="space-y-5">
+        <div className="space-y-3">
           {modelStats && (
-            <div className="bg-[#141414] border border-gray-800 rounded-xl p-5">
-              <h3 className="font-mono text-xs tracking-wider opacity-50 uppercase mb-4">Model Info</h3>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="bg-[#0a0a0a] rounded-lg p-3 text-center">
-                  <div className="font-mono text-lg font-bold text-cyan-400">{modelStats.triangles.toLocaleString()}</div>
-                  <div className="text-xs opacity-50 mt-1">Triangles</div>
-                </div>
-                <div className="bg-[#0a0a0a] rounded-lg p-3 text-center">
-                  <div className="font-mono text-lg font-bold text-cyan-400">{modelStats.materials}</div>
-                  <div className="text-xs opacity-50 mt-1">Materials</div>
-                </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="bg-neutral-900 border border-neutral-800 rounded-lg p-3 text-center">
+                <div className="font-mono text-sm">{modelStats.triangles.toLocaleString()}</div>
+                <div className="text-[10px] text-neutral-500 mt-0.5">tris</div>
+              </div>
+              <div className="bg-neutral-900 border border-neutral-800 rounded-lg p-3 text-center">
+                <div className="font-mono text-sm">{modelStats.materials}</div>
+                <div className="text-[10px] text-neutral-500 mt-0.5">mats</div>
               </div>
             </div>
           )}
 
-          <div className="bg-[#141414] border border-gray-800 rounded-xl p-5">
-            <h3 className="font-mono text-xs tracking-wider opacity-50 uppercase mb-4">Category</h3>
+          <div className="bg-neutral-900 border border-neutral-800 rounded-lg p-4 space-y-3">
+            <input
+              type="text"
+              value={objectName}
+              onChange={(e) => setObjectName(e.target.value)}
+              placeholder="Name"
+              className="w-full px-3 py-2 bg-black border border-neutral-800 rounded text-sm focus:outline-none focus:border-neutral-600"
+            />
             <select
               value={category}
               onChange={(e) => setCategory(e.target.value)}
-              className="w-full px-4 py-3 bg-[#0a0a0a] border border-gray-700 rounded-lg text-white focus:outline-none focus:border-cyan-500"
+              className="w-full px-3 py-2 bg-black border border-neutral-800 rounded text-sm focus:outline-none focus:border-neutral-600"
             >
               {Object.entries(groupedCategories).map(([group, cats]) => (
                 <optgroup key={group} label={group}>
@@ -462,136 +455,98 @@ export default function UploadPortal() {
                 </optgroup>
               ))}
             </select>
-            <p className="text-xs opacity-40 mt-2 font-mono">Path: /{category}/</p>
           </div>
 
-          <div className="bg-[#141414] border border-gray-800 rounded-xl p-5">
-            <h3 className="font-mono text-xs tracking-wider opacity-50 uppercase mb-4">Target Dimensions</h3>
-            <label className="block text-sm mb-2 opacity-70">Real-world Height</label>
-            <div className="flex">
+          <div className="bg-neutral-900 border border-neutral-800 rounded-lg p-4">
+            <div className="flex gap-2">
               <input
                 type="number"
                 value={targetHeight}
                 onChange={(e) => setTargetHeight(e.target.value ? Number(e.target.value) : '')}
-                placeholder="e.g. 150"
-                className="flex-1 px-4 py-3 bg-[#0a0a0a] border border-gray-700 rounded-l-lg text-white focus:outline-none focus:border-cyan-500"
+                placeholder="Height"
+                className="flex-1 px-3 py-2 bg-black border border-neutral-800 rounded text-sm focus:outline-none focus:border-neutral-600"
               />
-              <span className="px-4 py-3 bg-gray-800 border border-l-0 border-gray-700 rounded-r-lg font-mono text-sm text-gray-400">
-                mm
-              </span>
+              <span className="px-3 py-2 bg-neutral-800 rounded text-xs text-neutral-400">mm</span>
             </div>
             {scaleFactor && (
-              <div className="mt-3 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-sm">
-                <strong className="font-mono text-amber-400">Scale: {scaleFactor.toFixed(4)}×</strong>
-                <br />
-                <small className="opacity-60">Model will be uniformly scaled</small>
-              </div>
+              <div className="mt-2 text-xs text-amber-400 font-mono">{scaleFactor.toFixed(4)}×</div>
             )}
           </div>
 
-          <div className="bg-[#141414] border border-gray-800 rounded-xl p-5">
-            <h3 className="font-mono text-xs tracking-wider opacity-50 uppercase mb-4">Metadata</h3>
-            <label className="block text-sm mb-2 opacity-70">Object Name</label>
-            <input
-              type="text"
-              value={objectName}
-              onChange={(e) => setObjectName(e.target.value)}
-              placeholder="e.g. Eames Lounge Chair"
-              className="w-full px-4 py-3 bg-[#0a0a0a] border border-gray-700 rounded-lg mb-4 text-white focus:outline-none focus:border-cyan-500"
-            />
-
-            <label className="block text-sm mb-2 opacity-70">Tags</label>
+          <div className="bg-neutral-900 border border-neutral-800 rounded-lg p-4">
             <input
               type="text"
               value={tagInput}
               onChange={(e) => setTagInput(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && addTag(tagInput)}
-              placeholder="Type and press Enter"
-              className="w-full px-4 py-3 bg-[#0a0a0a] border border-gray-700 rounded-lg text-white focus:outline-none focus:border-cyan-500"
+              placeholder="Add tag..."
+              className="w-full px-3 py-2 bg-black border border-neutral-800 rounded text-sm focus:outline-none focus:border-neutral-600"
             />
-            <div className="flex flex-wrap gap-2 mt-3">
-              {tags.map((tag, i) => (
-                <span key={i} className="bg-gray-800 px-3 py-1.5 rounded-full text-sm flex items-center gap-2">
-                  {tag}
-                  <button onClick={() => setTags(tags.filter((_, j) => j !== i))} className="opacity-50 hover:opacity-100">×</button>
-                </span>
-              ))}
-            </div>
+            {tags.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {tags.map((tag, i) => (
+                  <span key={i} className="bg-neutral-800 px-2 py-1 rounded text-xs flex items-center gap-1.5">
+                    {tag}
+                    <button onClick={() => setTags(tags.filter((_, j) => j !== i))} className="text-neutral-500 hover:text-white">×</button>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
 
-          <div className="bg-[#141414] border border-gray-800 rounded-xl p-5">
-            <h3 className="font-mono text-xs tracking-wider opacity-50 uppercase mb-4">AI Analysis</h3>
-            <button
-              onClick={analyzeWithAI}
-              disabled={!file || isAnalyzing}
-              className="w-full py-3.5 bg-gradient-to-r from-cyan-600 to-blue-600 text-white rounded-lg font-mono text-xs tracking-wider disabled:from-gray-700 disabled:to-gray-700 disabled:text-gray-500 transition-all hover:from-cyan-500 hover:to-blue-500"
-            >
-              {isAnalyzing ? '🔄 Analyzing with Gemini 3...' : '🤖 ANALYZE WITH GEMINI 3'}
-            </button>
+          <button
+            onClick={analyzeWithAI}
+            disabled={!file || isAnalyzing}
+            className="w-full py-2.5 bg-neutral-900 border border-neutral-800 text-sm rounded-lg hover:bg-neutral-800 disabled:opacity-40 transition"
+          >
+            {isAnalyzing ? 'Analyzing...' : '✨ AI Analyze'}
+          </button>
 
-            {materials.length > 0 && (
-              <div className="mt-5 pt-5 border-t border-gray-800">
-                <h4 className="font-mono text-xs tracking-wider opacity-50 uppercase mb-3">Materials</h4>
-                <div className="grid grid-cols-2 gap-2">
-                  {materials.slice(0, 6).map((mat, i) => (
-                    <div key={i} className="flex items-center gap-2 p-2 bg-[#0a0a0a] rounded-lg">
-                      <div className="w-7 h-7 rounded border border-gray-700" style={{ backgroundColor: mat.color }} />
-                      <div className="min-w-0">
-                        <div className="text-xs font-medium truncate">{mat.name}</div>
-                        <div className="text-xs opacity-40">{mat.type}</div>
-                      </div>
+          {(materials.length > 0 || colors.length > 0) && (
+            <div className="bg-neutral-900 border border-neutral-800 rounded-lg p-4">
+              {colors.length > 0 && (
+                <div className="flex gap-1.5 mb-3">
+                  {colors.slice(0, 6).map((color, i) => (
+                    <div key={i} className="w-6 h-6 rounded border border-neutral-700" style={{ backgroundColor: color }} title={color} />
+                  ))}
+                </div>
+              )}
+              {materials.length > 0 && (
+                <div className="grid grid-cols-2 gap-1.5">
+                  {materials.slice(0, 4).map((mat, i) => (
+                    <div key={i} className="flex items-center gap-2 p-1.5 bg-black rounded">
+                      <div className="w-5 h-5 rounded" style={{ backgroundColor: mat.color }} />
+                      <span className="text-[10px] text-neutral-400 truncate">{mat.name}</span>
                     </div>
                   ))}
                 </div>
-              </div>
-            )}
+              )}
+            </div>
+          )}
 
-            {colors.length > 0 && (
-              <div className="mt-4 pt-4 border-t border-gray-800">
-                <h4 className="font-mono text-xs tracking-wider opacity-50 uppercase mb-3">Colors</h4>
-                <div className="flex flex-wrap gap-2">
-                  {colors.slice(0, 8).map((color, i) => (
-                    <div
-                      key={i}
-                      className="w-8 h-8 rounded-lg border-2 border-gray-700 cursor-pointer hover:border-white transition-colors"
-                      style={{ backgroundColor: color }}
-                      title={color}
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
+          <button
+            onClick={handleUpload}
+            disabled={!file || isUploading}
+            className={`w-full py-3 rounded-lg font-medium text-sm transition-all
+              ${uploadResult 
+                ? 'bg-green-600 text-white' 
+                : 'bg-white text-black hover:bg-neutral-200 disabled:bg-neutral-800 disabled:text-neutral-500'}`}
+          >
+            {isUploading ? 'Uploading...' : uploadResult ? '✓ Done' : 'Upload'}
+          </button>
 
-          <div className="bg-[#141414] border border-gray-800 rounded-xl p-5">
-            <button
-              onClick={handleUpload}
-              disabled={!file || isUploading}
-              className={`w-full py-4 rounded-lg font-mono text-sm tracking-wider transition-all
-                ${uploadResult 
-                  ? 'bg-emerald-600 text-white' 
-                  : 'bg-white text-black hover:bg-gray-200 disabled:bg-gray-800 disabled:text-gray-500'}`}
-            >
-              {isUploading ? 'UPLOADING...' : uploadResult ? '✓ UPLOADED' : 'UPLOAD TO CATALOG'}
-            </button>
-
-            {isUploading && (
-              <div className="mt-4 h-1 bg-gray-800 rounded overflow-hidden">
-                <div className="h-full bg-cyan-500 transition-all duration-300" style={{ width: `${uploadProgress}%` }} />
-              </div>
-            )}
-          </div>
+          {isUploading && (
+            <div className="h-1 bg-neutral-800 rounded overflow-hidden">
+              <div className="h-full bg-blue-500 transition-all" style={{ width: `${uploadProgress}%` }} />
+            </div>
+          )}
 
           {uploadResult && (
-            <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-5">
-              <h3 className="font-mono text-xs tracking-wider text-emerald-400 uppercase mb-2">✓ Upload Complete</h3>
-              <p className="text-sm text-emerald-300 mb-3">Model added to /{category}/</p>
-              <div className="bg-black/30 p-3 rounded-lg font-mono text-xs break-all text-emerald-200">
-                {uploadResult.url}
-              </div>
+            <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-3">
+              <div className="font-mono text-[10px] text-green-400 break-all">{uploadResult.url}</div>
               <button
                 onClick={() => navigator.clipboard.writeText(uploadResult.url)}
-                className="mt-3 px-4 py-2 bg-emerald-600 text-white rounded-lg font-mono text-xs hover:bg-emerald-500 transition-colors"
+                className="mt-2 text-xs text-green-300 hover:text-green-200"
               >
                 Copy URL
               </button>
