@@ -1,20 +1,5 @@
 import type { Metadata, Viewport } from 'next';
-import { Space_Mono, DM_Sans } from 'next/font/google';
 import './globals.css';
-
-const spaceMono = Space_Mono({
-  weight: ['400', '700'],
-  subsets: ['latin'],
-  variable: '--font-mono',
-  display: 'swap',
-});
-
-const dmSans = DM_Sans({
-  weight: ['400', '500', '600'],
-  subsets: ['latin'],
-  variable: '--font-sans',
-  display: 'swap',
-});
 
 export const metadata: Metadata = {
   title: 'KATALOG — Things in Life',
@@ -41,7 +26,15 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="no" className={`${spaceMono.variable} ${dmSans.variable}`}>
+    <html lang="no">
+      <head>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link 
+          href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap" 
+          rel="stylesheet" 
+        />
+      </head>
       <body className="font-sans antialiased bg-[#f5f5f5] text-gray-900">
         {children}
       </body>
