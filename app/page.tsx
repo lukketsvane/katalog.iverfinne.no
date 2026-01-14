@@ -5,14 +5,33 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
+interface MaterialInfo {
+  name: string;      // Material name
+  type: string;      // Material type (e.g., "MeshStandard")
+  color: string;     // Hex color (e.g., "#ff0000")
+  metalness: number; // 0-1
+  roughness: number; // 0-1
+}
+
 interface CatalogItem {
-  url: string;
-  pathname: string;
-  name: string;
-  category: string;
+  id?: number;                    // Unique timestamp-based ID
+  url: string;                   // Vercel Blob URL to GLB file
+  pathname?: string;
+  name: string;                  // Display name
+  type?: string;                  // Always "3d"
+  category: string;              // Category path (e.g., "furniture/chairs")
+  tags?: string[];                // Array of lowercase tags
+  thumbnail?: string;            // Base64 data URL (PNG with transparency)
   size?: number;
   uploadedAt?: string;
-  thumbnail?: string;
+  metadata?: {
+    materials?: MaterialInfo[];  // Extracted material data
+    colors?: string[];           // Hex color codes from model
+    targetHeight?: number | null; // Target height in mm
+    scaleFactor?: number | null;  // Scale multiplier for real-world size
+    description?: string;         // AI-generated description
+    uploadedAt?: string;          // ISO 8601 timestamp
+  };
 }
 
 const CATEGORIES = [
@@ -56,19 +75,39 @@ export default function Katalog() {
   const [gridSize, setGridSize] = useState<'small' | 'medium' | 'large'>('medium');
   const [sortBy, setSortBy] = useState<'name' | 'date' | 'category'>('date');
 
-  // Fetch items from blob storage
+  // Fetch items from localStorage and blob storage
   useEffect(() => {
     const fetchItems = async () => {
       try {
+        // Read from localStorage first
+        const localCatalog = JSON.parse(localStorage.getItem('katalog-config') || '{"items":[]}');
+        const localItems: CatalogItem[] = localCatalog.items || [];
+
+        // Fetch from API
         const response = await fetch('/api/items');
         const data = await response.json();
+        const apiItems: CatalogItem[] = data.items || [];
+
+        // Merge: localStorage items take priority by URL
+        const localItemUrls = new Set(localItems.map(item => item.url));
+        const mergedItems = [
+          ...localItems,
+          ...apiItems.filter(item => !localItemUrls.has(item.url))
+        ];
         
-        if (data.items) {
-          setItems(data.items);
-          setFilteredItems(data.items);
-        }
+        setItems(mergedItems);
+        setFilteredItems(mergedItems);
       } catch (err) {
         console.error('Failed to fetch items:', err);
+        // Fallback to localStorage only if API fails
+        try {
+          const localCatalog = JSON.parse(localStorage.getItem('katalog-config') || '{"items":[]}');
+          setItems(localCatalog.items || []);
+          setFilteredItems(localCatalog.items || []);
+        } catch {
+          setItems([]);
+          setFilteredItems([]);
+        }
       } finally {
         setLoading(false);
       }
@@ -86,12 +125,14 @@ export default function Katalog() {
       result = result.filter(item => item.category.startsWith(selectedCategory));
     }
 
-    // Filter by search
+    // Filter by search (includes tags)
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       result = result.filter(item => 
         item.name.toLowerCase().includes(query) ||
-        item.category.toLowerCase().includes(query)
+        item.category.toLowerCase().includes(query) ||
+        (item.tags && item.tags.some(tag => tag.toLowerCase().includes(query))) ||
+        (item.metadata?.description && item.metadata.description.toLowerCase().includes(query))
       );
     }
 
@@ -101,7 +142,10 @@ export default function Katalog() {
         case 'name':
           return a.name.localeCompare(b.name);
         case 'date':
-          return new Date(b.uploadedAt || 0).getTime() - new Date(a.uploadedAt || 0).getTime();
+          // Use metadata.uploadedAt if available, fallback to uploadedAt
+          const aDate = a.metadata?.uploadedAt || a.uploadedAt || '0';
+          const bDate = b.metadata?.uploadedAt || b.uploadedAt || '0';
+          return new Date(bDate).getTime() - new Date(aDate).getTime();
         case 'category':
           return a.category.localeCompare(b.category);
         default:
@@ -569,6 +613,18 @@ function ItemModal({ item, onClose }: { item: CatalogItem; onClose: () => void }
           <div>
             <h2 className="text-lg font-medium">{item.name}</h2>
             <p className="text-sm text-gray-500 font-mono">{item.category}</p>
+            {item.tags && item.tags.length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-1">
+                {item.tags.map((tag, index) => (
+                  <span key={index} className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded">
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            )}
+            {item.metadata?.description && (
+              <p className="text-xs text-gray-400 mt-1 max-w-md">{item.metadata.description}</p>
+            )}
           </div>
           <button
             onClick={onClose}
