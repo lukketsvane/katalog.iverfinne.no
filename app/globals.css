@@ -2,55 +2,27 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --font-mono: 'Space Mono', ui-monospace, monospace;
-  --font-sans: 'DM Sans', system-ui, sans-serif;
-}
-
 * {
+  margin: 0;
+  padding: 0;
   box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
 }
 
-body {
-  font-family: var(--font-sans);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+:root {
+  --bg: #f8f8f8;
+  --card-bg: #efefef;
+  --text: #1a1a1a;
+  --text-muted: #666;
+  --border: #e0e0e0;
 }
 
-.font-mono {
-  font-family: var(--font-mono);
-}
-
-/* Scrollbar */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-::-webkit-scrollbar-track {
-  background: #f0f0f0;
-}
-
-::-webkit-scrollbar-thumb {
-  background: #ccc;
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #aaa;
-}
-
-/* Selection */
-::selection {
-  background: rgba(0, 0, 0, 0.1);
-}
-
-/* Focus */
-input:focus,
-select:focus,
-button:focus-visible {
-  outline: 2px solid rgba(0, 0, 0, 0.2);
-  outline-offset: 2px;
+html, body {
+  font-family: 'DM Sans', -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  overflow-x: hidden;
+  min-height: 100dvh;
 }
 
 /* Canvas */
@@ -60,23 +32,6 @@ canvas {
   height: 100% !important;
 }
 
-/* Animations */
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.group {
-  animation: fadeIn 0.3s ease-out forwards;
-  opacity: 0;
-}
-
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -84,12 +39,5 @@ canvas {
 }
 
 .animate-spin {
-  animation: spin 1s linear infinite;
-}
-
-/* Smooth transitions */
-* {
-  transition-property: background-color, border-color, color, opacity;
-  transition-duration: 150ms;
-  transition-timing-function: ease;
+  animation: spin 0.8s linear infinite;
 }

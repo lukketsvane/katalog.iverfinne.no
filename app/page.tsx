@@ -1,675 +1,273 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
-import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import React, { useState, useEffect, useRef } from 'react';
 
-interface MaterialInfo {
-  name: string;      // Material name
-  type: string;      // Material type (e.g., "MeshStandard")
-  color: string;     // Hex color (e.g., "#ff0000")
-  metalness: number; // 0-1
-  roughness: number; // 0-1
-}
+const BLOB_BASE = 'https://yswmt0em8hyvljdk.public.blob.vercel-storage.com';
 
 interface CatalogItem {
-  id?: number;                    // Unique timestamp-based ID
-  url: string;                   // Vercel Blob URL to GLB file
-  pathname?: string;
-  name: string;                  // Display name
-  type?: string;                  // Always "3d"
-  category: string;              // Category path (e.g., "furniture/chairs")
-  tags?: string[];                // Array of lowercase tags
-  thumbnail?: string;            // Base64 data URL (PNG with transparency)
-  size?: number;
-  uploadedAt?: string;
-  metadata?: {
-    materials?: MaterialInfo[];  // Extracted material data
-    colors?: string[];           // Hex color codes from model
-    targetHeight?: number | null; // Target height in mm
-    scaleFactor?: number | null;  // Scale multiplier for real-world size
-    description?: string;         // AI-generated description
-    uploadedAt?: string;          // ISO 8601 timestamp
-  };
+  id: number;
+  name: string;
+  url: string;
+  category: string;
+  tags: string[];
+  size: string;
+  uploadedAt: string;
 }
 
-const CATEGORIES = [
-  { value: 'all', label: 'All' },
-  { value: 'furniture/chairs', label: 'Chairs' },
-  { value: 'furniture/tables', label: 'Tables' },
-  { value: 'furniture/lamps', label: 'Lamps' },
-  { value: 'furniture/storage', label: 'Storage' },
-  { value: 'electronics', label: 'Electronics' },
-  { value: 'kitchen', label: 'Kitchen' },
-  { value: 'clothing', label: 'Clothing' },
-  { value: 'toys', label: 'Toys' },
-  { value: 'tools', label: 'Tools' },
-  { value: 'art', label: 'Art' },
-  { value: 'personal', label: 'Personal' },
-  { value: 'misc', label: 'Misc' },
+const CATALOG_ITEMS: CatalogItem[] = [
+  { id: 1, name: 'Mechanical Keyboard', url: `${BLOB_BASE}/electronics/mechanical-keyboard-1768366050152-uB9sdebxEqtXAE5ySxGPopefn7HLBN.glb`, category: 'electronics', tags: ['keyboard', 'mechanical', 'tech'], size: '30.1 MB', uploadedAt: '2026-01-14' },
+  { id: 2, name: 'Battery Energy Drink', url: `${BLOB_BASE}/kitchen/battery-energy-drink-1768364798401-5JqO78AiCwAQm7Y1W9VT1RkcKmpzYe.glb`, category: 'kitchen', tags: ['drink', 'can', 'energy'], size: '3.9 MB', uploadedAt: '2026-01-14' },
+  { id: 3, name: 'Camel Cigarette Pack', url: `${BLOB_BASE}/personal/camel-cigarette-pack-1768363441889-J5EEUIgRekBSD0oIuJEfMrKkQjw90u.glb`, category: 'personal', tags: ['cigarettes', 'camel', 'pack'], size: '4.6 MB', uploadedAt: '2026-01-14' },
+  { id: 4, name: 'Cigarette Pack', url: `${BLOB_BASE}/personal/cigarette-pack-1768360298495-x3Nx8mURa51kxNCifbT6qPzyWbomNz.glb`, category: 'personal', tags: ['cigarettes', 'pack'], size: '45.9 MB', uploadedAt: '2026-01-14' },
+  { id: 5, name: 'Cigarette Pack Alt', url: `${BLOB_BASE}/personal/cigarette-pack-1768362263788-QaNdHbPUQups26NpmO6fkS3tuXCxrP.glb`, category: 'personal', tags: ['cigarettes', 'pack'], size: '45.9 MB', uploadedAt: '2026-01-14' },
+  { id: 6, name: 'Bobblehead Figurine', url: `${BLOB_BASE}/toys/man-bobblehead-figurine-1768365190007-S7dL4VU4sbK0jul3l6ZEhSZwjTaOyu.glb`, category: 'toys', tags: ['figurine', 'bobblehead', 'toy'], size: '2.4 MB', uploadedAt: '2026-01-14' }
 ];
 
-// Models that should not open in the overlay window
-const IGNORED_MODELS = ['Sculpt5', 'Sculpt9'];
-const IGNORED_CATEGORY = 'models';
+type GridSize = 'xs' | 'sm' | 'md' | 'lg';
 
-// Viewer configuration constants
-const ZOOM_MIN_DISTANCE = 1;
-const ZOOM_MAX_DISTANCE = 10;
-
-// Safely parse localStorage catalog data with validation
-function parseLocalStorageCatalog(): CatalogItem[] {
-  try {
-    const raw = localStorage.getItem('katalog-config');
-    if (!raw) return [];
-    
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.items)) {
-      return [];
-    }
-    
-    // Validate each item has required fields
-    return parsed.items.filter((item: unknown): item is CatalogItem => {
-      if (!item || typeof item !== 'object') return false;
-      const obj = item as Record<string, unknown>;
-      return typeof obj.url === 'string' && 
-             typeof obj.name === 'string' && 
-             typeof obj.category === 'string';
-    });
-  } catch {
-    return [];
-  }
-}
-
-function shouldIgnoreItem(item: CatalogItem): boolean {
-  return (
-    item.category.toLowerCase() === IGNORED_CATEGORY &&
-    IGNORED_MODELS.some(name => item.name.toLowerCase() === name.toLowerCase())
-  );
-}
-
-export default function Katalog() {
-  const [items, setItems] = useState<CatalogItem[]>([]);
-  const [filteredItems, setFilteredItems] = useState<CatalogItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [selectedCategory, setSelectedCategory] = useState('all');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedItem, setSelectedItem] = useState<CatalogItem | null>(null);
-  const [gridSize, setGridSize] = useState<'small' | 'medium' | 'large'>('medium');
-  const [sortBy, setSortBy] = useState<'name' | 'date' | 'category'>('date');
-
-  // Fetch items from localStorage and blob storage
-  useEffect(() => {
-    const fetchItems = async () => {
-      try {
-        // Read from localStorage first (with safe parsing and validation)
-        const localItems = parseLocalStorageCatalog();
-
-        // Fetch from API
-        const response = await fetch('/api/items');
-        const data = await response.json();
-        const apiItems: CatalogItem[] = data.items || [];
-
-        // Merge: localStorage items take priority by URL
-        const localItemUrls = new Set(localItems.map(item => item.url));
-        const mergedItems = [
-          ...localItems,
-          ...apiItems.filter(item => !localItemUrls.has(item.url))
-        ];
-        
-        setItems(mergedItems);
-        setFilteredItems(mergedItems);
-      } catch (err) {
-        console.error('Failed to fetch items:', err);
-        // Fallback to localStorage only if API fails
-        const localItems = parseLocalStorageCatalog();
-        setItems(localItems);
-        setFilteredItems(localItems);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchItems();
-  }, []);
-
-  // Filter and sort items
-  useEffect(() => {
-    let result = [...items];
-
-    // Filter by category
-    if (selectedCategory !== 'all') {
-      result = result.filter(item => item.category.startsWith(selectedCategory));
-    }
-
-    // Filter by search (includes tags)
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      result = result.filter(item => 
-        item.name.toLowerCase().includes(query) ||
-        item.category.toLowerCase().includes(query) ||
-        (item.tags && item.tags.some(tag => tag.includes(query))) ||
-        (item.metadata?.description && item.metadata.description.toLowerCase().includes(query))
-      );
-    }
-
-    // Sort
-    result.sort((a, b) => {
-      switch (sortBy) {
-        case 'name':
-          return a.name.localeCompare(b.name);
-        case 'date':
-          // Use metadata.uploadedAt if available, fallback to uploadedAt
-          const aDate = a.metadata?.uploadedAt || a.uploadedAt || '0';
-          const bDate = b.metadata?.uploadedAt || b.uploadedAt || '0';
-          return new Date(bDate).getTime() - new Date(aDate).getTime();
-        case 'category':
-          return a.category.localeCompare(b.category);
-        default:
-          return 0;
-      }
-    });
-
-    setFilteredItems(result);
-  }, [items, selectedCategory, searchQuery, sortBy]);
-
-  const gridClass = {
-    small: 'grid-cols-4 md:grid-cols-6 lg:grid-cols-8',
-    medium: 'grid-cols-2 md:grid-cols-4 lg:grid-cols-5',
-    large: 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3',
-  }[gridSize];
-
-  return (
-    <div className="min-h-screen bg-[#f5f5f5]">
-      {/* Header */}
-      <header className="sticky top-0 z-40 bg-[#f5f5f5] border-b border-gray-200">
-        <div className="max-w-[1800px] mx-auto px-6 py-5">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <h1 className="font-mono text-sm tracking-[0.4em] font-bold text-black">
-              K A T A L O G
-            </h1>
-            
-            <div className="flex items-center gap-4 flex-wrap">
-              {/* Search */}
-              <input
-                type="text"
-                placeholder="Search..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm w-48 focus:outline-none focus:border-gray-400"
-              />
-
-              {/* Category filter */}
-              <select
-                value={selectedCategory}
-                onChange={(e) => setSelectedCategory(e.target.value)}
-                className="px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-gray-400"
-              >
-                {CATEGORIES.map(cat => (
-                  <option key={cat.value} value={cat.value}>{cat.label}</option>
-                ))}
-              </select>
-
-              {/* Sort */}
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
-                className="px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-gray-400"
-              >
-                <option value="date">Newest</option>
-                <option value="name">Name</option>
-                <option value="category">Category</option>
-              </select>
-
-              {/* Grid size */}
-              <div className="flex border border-gray-200 rounded-lg overflow-hidden">
-                {(['small', 'medium', 'large'] as const).map(size => (
-                  <button
-                    key={size}
-                    onClick={() => setGridSize(size)}
-                    className={`px-3 py-2 text-xs ${gridSize === size ? 'bg-black text-white' : 'bg-white text-gray-600 hover:bg-gray-100'}`}
-                  >
-                    {size === 'small' ? '▪▪▪' : size === 'medium' ? '▪▪' : '▪'}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      </header>
-
-      {/* Stats bar */}
-      <div className="max-w-[1800px] mx-auto px-6 py-3 text-xs text-gray-500 font-mono">
-        {filteredItems.length} items
-        {selectedCategory !== 'all' && ` in ${selectedCategory}`}
-        {searchQuery && ` matching "${searchQuery}"`}
-      </div>
-
-      {/* Main content */}
-      <main className="max-w-[1800px] mx-auto px-6 pb-16">
-        {loading ? (
-          <div className="flex items-center justify-center py-32">
-            <div className="text-gray-400 font-mono text-sm">Loading catalog...</div>
-          </div>
-        ) : filteredItems.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-32">
-            <div className="text-gray-400 font-mono text-sm">No items found</div>
-          </div>
-        ) : (
-          <div className={`grid ${gridClass} gap-4`}>
-            {filteredItems.map((item, index) => (
-              <CatalogCard
-                key={item.url}
-                item={item}
-                size={gridSize}
-                onClick={shouldIgnoreItem(item) ? undefined : () => setSelectedItem(item)}
-                index={index}
-              />
-            ))}
-          </div>
-        )}
-      </main>
-
-      {/* Modal */}
-      {selectedItem && (
-        <ItemModal
-          item={selectedItem}
-          onClose={() => setSelectedItem(null)}
-        />
-      )}
-    </div>
-  );
-}
-
-// Catalog Card Component
-function CatalogCard({ 
-  item, 
-  size, 
-  onClick,
-  index 
-}: { 
-  item: CatalogItem; 
-  size: 'small' | 'medium' | 'large';
-  onClick?: () => void;
-  index: number;
-}) {
+function ModelCard({ item, onClick, index }: { item: CatalogItem; onClick: () => void; gridSize: GridSize; index: number }) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
-  const [loaded, setLoaded] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
   useEffect(() => {
-    if (!containerRef.current || !item.url.match(/\.glb$/i)) return;
-
-    const container = containerRef.current;
-    const width = container.clientWidth;
-    const height = container.clientHeight;
-
-    if (width === 0 || height === 0) return;
-
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xe8e8e8);
-
-    const camera = new THREE.PerspectiveCamera(45, width / height, 0.01, 100);
-    camera.position.set(2, 1.5, 2);
-
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(width, height);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
-    // Enable realistic/PBR rendering for thumbnails
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.0;
-    container.appendChild(renderer.domElement);
-    rendererRef.current = renderer;
-
-    scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-    const light = new THREE.DirectionalLight(0xffffff, 1.2);
-    light.position.set(5, 5, 5);
-    scene.add(light);
-    // Add hemisphere light for better ambient
-    const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.4);
-    scene.add(hemiLight);
-
-    const loader = new GLTFLoader();
-    loader.load(
-      item.url,
-      (gltf) => {
+    let cleanup = () => {};
+    let animId: number | undefined;
+    
+    const loadViewer = async () => {
+      if (!containerRef.current) return;
+      
+      const THREE = await import('three');
+      const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js');
+      
+      const container = containerRef.current;
+      const size = container.clientWidth || 150;
+      
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0xefefef);
+      
+      const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 1000);
+      camera.position.set(2.5, 1.8, 2.5);
+      camera.lookAt(0, 0, 0);
+      
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setSize(size, size);
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      container.innerHTML = '';
+      container.appendChild(renderer.domElement);
+      
+      scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+      const key = new THREE.DirectionalLight(0xffffff, 1);
+      key.position.set(5, 8, 5);
+      scene.add(key);
+      const fill = new THREE.DirectionalLight(0xffffff, 0.4);
+      fill.position.set(-5, 2, -5);
+      scene.add(fill);
+      
+      const loader = new GLTFLoader();
+      let angle = Math.random() * Math.PI * 2;
+      
+      loader.load(item.url, (gltf) => {
         const model = gltf.scene;
         const box = new THREE.Box3().setFromObject(model);
-        const center = box.getCenter(new THREE.Vector3());
-        const boxSize = box.getSize(new THREE.Vector3());
-
-        // Center the model at origin
-        model.position.sub(center);
-        
-        // Calculate optimal scale to fill frame
-        const maxDim = Math.max(boxSize.x, boxSize.y, boxSize.z);
-        const targetSize = 1.8; // Slightly larger to fill frame better
-        model.scale.setScalar(targetSize / maxDim);
-
-        // Calculate optimal camera distance after scaling
-        const scaledBox = new THREE.Box3().setFromObject(model);
-        const scaledSize = scaledBox.getSize(new THREE.Vector3());
-        const scaledMaxDim = Math.max(scaledSize.x, scaledSize.y, scaledSize.z);
-        
-        const fov = camera.fov * (Math.PI / 180);
-        const aspectRatio = width / height;
-        const fitHeightDistance = (scaledMaxDim / 2) / Math.tan(fov / 2);
-        const fitWidthDistance = (scaledMaxDim / 2) / Math.tan(fov / 2) / aspectRatio;
-        const cameraDistance = Math.max(fitHeightDistance, fitWidthDistance) * 1.3;
-
-        // Position camera at a nice angle
-        const cameraAngle = Math.PI / 7; // ~25 degrees elevation
-        camera.position.set(
-          cameraDistance * Math.cos(cameraAngle) * Math.cos(Math.PI / 4),
-          cameraDistance * Math.sin(cameraAngle),
-          cameraDistance * Math.cos(cameraAngle) * Math.sin(Math.PI / 4)
-        );
-        camera.lookAt(0, 0, 0);
-
+        const s = box.getSize(new THREE.Vector3());
+        const c = box.getCenter(new THREE.Vector3());
+        const maxDim = Math.max(s.x, s.y, s.z);
+        const scale = 1.8 / maxDim;
+        model.scale.setScalar(scale);
+        model.position.sub(c.multiplyScalar(scale));
         scene.add(model);
-        setLoaded(true);
-
-        // Auto-rotate
-        let animationId: number;
-        const animate = () => {
-          animationId = requestAnimationFrame(animate);
-          model.rotation.y += 0.005;
+        setLoading(false);
+        
+        function animate() {
+          angle += 0.006;
+          model.rotation.y = angle;
           renderer.render(scene, camera);
-        };
+          animId = requestAnimationFrame(animate);
+        }
         animate();
-
-        return () => {
-          cancelAnimationFrame(animationId);
-        };
-      },
-      undefined,
-      () => {
+      }, undefined, () => {
         setError(true);
-      }
-    );
-
-    return () => {
-      renderer.dispose();
-      if (container.contains(renderer.domElement)) {
-        container.removeChild(renderer.domElement);
-      }
+        setLoading(false);
+      });
+      
+      cleanup = () => {
+        if (animId) cancelAnimationFrame(animId);
+        renderer.dispose();
+      };
     };
-  }, [item.url]);
-
-  const aspectClass = size === 'small' ? 'aspect-square' : 'aspect-[4/3]';
-  const isClickable = !!onClick;
+    
+    const timer = setTimeout(loadViewer, index * 150);
+    return () => { clearTimeout(timer); cleanup(); };
+  }, [item.url, index]);
 
   return (
-    <div
+    <button
       onClick={onClick}
-      className={`group ${isClickable ? 'cursor-pointer' : ''}`}
-      style={{ animationDelay: `${index * 30}ms` }}
+      className="aspect-square bg-[#efefef] rounded-[3px] overflow-hidden border-none cursor-pointer p-0 relative transition-all duration-150 hover:scale-[1.02] hover:shadow-lg active:scale-[0.98]"
     >
-      <div className={`${aspectClass} bg-[#e8e8e8] rounded-lg overflow-hidden relative`}>
-        <div ref={containerRef} className="absolute inset-0" />
-        
-        {!loaded && !error && (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="w-6 h-6 border-2 border-gray-300 border-t-gray-500 rounded-full animate-spin" />
-          </div>
-        )}
-
-        {error && (
-          <div className="absolute inset-0 flex items-center justify-center text-gray-400">
-            <span className="text-2xl">📦</span>
-          </div>
-        )}
-
-        {/* Hover overlay */}
-        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors" />
-      </div>
-
-      {size !== 'small' && (
-        <div className="mt-2 px-1">
-          <h3 className="text-sm font-medium text-gray-900 truncate">{item.name}</h3>
-          <p className="text-xs text-gray-500 font-mono">{item.category}</p>
+      {loading && (
+        <div className="absolute inset-0 flex items-center justify-center bg-[#efefef] z-[1]">
+          <div className="w-5 h-5 border-2 border-[#e0e0e0] border-t-[#1a1a1a] rounded-full animate-spin" />
         </div>
       )}
-    </div>
+      {error && (
+        <div className="absolute inset-0 flex items-center justify-center text-[9px] text-[#888]">
+          {item.name}
+        </div>
+      )}
+      <div ref={containerRef} className="w-full h-full" />
+    </button>
   );
 }
 
-// Modal Component
-function ItemModal({ item, onClose }: { item: CatalogItem; onClose: () => void }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [loading, setLoading] = useState(true);
+export default function KatalogViewer() {
+  const [items] = useState(CATALOG_ITEMS);
+  const [filteredItems, setFilteredItems] = useState(CATALOG_ITEMS);
+  const [selectedCategory, setSelectedCategory] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [gridSize, setGridSize] = useState<GridSize>('md');
+  const [selectedItem, setSelectedItem] = useState<CatalogItem | null>(null);
 
   useEffect(() => {
-    if (!containerRef.current) return;
-
-    const container = containerRef.current;
-    const width = container.clientWidth;
-    const height = container.clientHeight;
-
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xf5f5f5);
-
-    const camera = new THREE.PerspectiveCamera(45, width / height, 0.001, 1000);
-    camera.position.set(3, 2, 3);
-
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(width, height);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
-    // Enable realistic/PBR rendering
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.0;
-    container.appendChild(renderer.domElement);
-
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.05;
-    // Disable pan, allow limited zoom
-    controls.enablePan = false;
-    controls.enableZoom = true;
-    controls.minDistance = ZOOM_MIN_DISTANCE;
-    controls.maxDistance = ZOOM_MAX_DISTANCE;
-
-    // Lighting setup for realistic rendering
-    scene.add(new THREE.AmbientLight(0xffffff, 0.4));
-    const keyLight = new THREE.DirectionalLight(0xffffff, 1.5);
-    keyLight.position.set(5, 5, 5);
-    scene.add(keyLight);
-    const fillLight = new THREE.DirectionalLight(0xffffff, 0.5);
-    fillLight.position.set(-5, 0, -5);
-    scene.add(fillLight);
-    // Add hemisphere light for better ambient
-    const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.5);
-    scene.add(hemiLight);
-
-    // Track state for light control
-    let isDraggingLight = false;
-    let lastMouseX = 0;
-    let lastMouseY = 0;
-
-    const handleKeyDownLocal = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-
-    const handleMouseDown = (e: MouseEvent) => {
-      if (e.shiftKey) {
-        isDraggingLight = true;
-        lastMouseX = e.clientX;
-        lastMouseY = e.clientY;
-        controls.enabled = false; // Disable camera controls while adjusting light
-        e.preventDefault();
-      }
-    };
-
-    const handleMouseMove = (e: MouseEvent) => {
-      if (isDraggingLight && e.shiftKey) {
-        const deltaX = e.clientX - lastMouseX;
-        const deltaY = e.clientY - lastMouseY;
-        lastMouseX = e.clientX;
-        lastMouseY = e.clientY;
-
-        // Rotate light position based on mouse movement
-        const spherical = new THREE.Spherical();
-        spherical.setFromVector3(keyLight.position);
-        spherical.theta -= deltaX * 0.01;
-        spherical.phi -= deltaY * 0.01;
-        // Clamp phi to prevent flipping
-        spherical.phi = Math.max(0.1, Math.min(Math.PI - 0.1, spherical.phi));
-        keyLight.position.setFromSpherical(spherical);
-      } else if (isDraggingLight && !e.shiftKey) {
-        // User released shift while dragging, stop light adjustment
-        isDraggingLight = false;
-        controls.enabled = true;
-      }
-    };
-
-    const handleMouseUp = () => {
-      if (isDraggingLight) {
-        isDraggingLight = false;
-        controls.enabled = true; // Re-enable camera controls
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDownLocal);
-    container.addEventListener('mousedown', handleMouseDown);
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
-
-    const loader = new GLTFLoader();
-    loader.load(item.url, (gltf) => {
-      const model = gltf.scene;
-      const box = new THREE.Box3().setFromObject(model);
-      const center = box.getCenter(new THREE.Vector3());
-      const size = box.getSize(new THREE.Vector3());
-
-      // Center the model at origin
-      model.position.sub(center);
-      
-      // Calculate the bounding sphere for better framing
-      const maxDim = Math.max(size.x, size.y, size.z);
-      
-      // Scale the model to a normalized size
-      const targetSize = 2.0;
-      const scale = targetSize / maxDim;
-      model.scale.setScalar(scale);
-
-      // Recalculate bounding box after scaling
-      const scaledBox = new THREE.Box3().setFromObject(model);
-      const scaledSize = scaledBox.getSize(new THREE.Vector3());
-      const scaledMaxDim = Math.max(scaledSize.x, scaledSize.y, scaledSize.z);
-
-      // Calculate optimal camera distance to frame the model
-      const fov = camera.fov * (Math.PI / 180);
-      const aspectRatio = width / height;
-      // Use the larger dimension relative to FOV for proper framing
-      const fitHeightDistance = (scaledMaxDim / 2) / Math.tan(fov / 2);
-      const fitWidthDistance = (scaledMaxDim / 2) / Math.tan(fov / 2) / aspectRatio;
-      const cameraDistance = Math.max(fitHeightDistance, fitWidthDistance) * 1.2; // 1.2 for some padding
-
-      // Position camera at a nice angle
-      const cameraAngle = Math.PI / 6; // 30 degrees elevation
-      camera.position.set(
-        cameraDistance * Math.cos(cameraAngle) * Math.cos(Math.PI / 4),
-        cameraDistance * Math.sin(cameraAngle),
-        cameraDistance * Math.cos(cameraAngle) * Math.sin(Math.PI / 4)
+    let filtered = [...items];
+    if (selectedCategory !== 'all') {
+      filtered = filtered.filter(item => item.category === selectedCategory);
+    }
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      filtered = filtered.filter(item =>
+        item.name?.toLowerCase().includes(q) ||
+        item.category?.toLowerCase().includes(q) ||
+        item.tags?.some(t => t.toLowerCase().includes(q))
       );
-      
-      // Set controls target to center of geometry (origin after centering)
-      controls.target.set(0, 0, 0);
-      camera.lookAt(0, 0, 0);
-      
-      // Update zoom limits based on model size
-      controls.minDistance = cameraDistance * 0.3;
-      controls.maxDistance = cameraDistance * 3;
-      controls.update();
+    }
+    setFilteredItems(filtered);
+  }, [items, selectedCategory, searchQuery]);
 
-      scene.add(model);
-      setLoading(false);
-    });
+  const categories = ['all', ...Array.from(new Set(items.map(i => i.category)))];
+  const tags = ['all', ...Array.from(new Set(items.flatMap(i => i.tags)))];
+  const sizes: GridSize[] = ['xs', 'sm', 'md', 'lg'];
 
-    let animationId: number;
-    const animate = () => {
-      animationId = requestAnimationFrame(animate);
-      controls.update();
-      renderer.render(scene, camera);
-    };
-    animate();
-
-    // Handle resize
-    const handleResize = () => {
-      const w = container.clientWidth;
-      const h = container.clientHeight;
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
-      renderer.setSize(w, h);
-    };
-    window.addEventListener('resize', handleResize);
-
-    return () => {
-      cancelAnimationFrame(animationId);
-      window.removeEventListener('resize', handleResize);
-      window.removeEventListener('keydown', handleKeyDownLocal);
-      container.removeEventListener('mousedown', handleMouseDown);
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-      renderer.dispose();
-      controls.dispose();
-    };
-  }, [item.url, onClose]);
+  const gridClasses: Record<GridSize, string> = {
+    xs: 'grid-cols-[repeat(auto-fill,minmax(48px,1fr))] gap-[3px]',
+    sm: 'grid-cols-[repeat(auto-fill,minmax(72px,1fr))] gap-1',
+    md: 'grid-cols-[repeat(auto-fill,minmax(120px,1fr))] gap-1.5',
+    lg: 'grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-2'
+  };
 
   return (
-    <div 
-      className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4 md:p-8"
-      onClick={(e) => e.target === e.currentTarget && onClose()}
-    >
-      <div className="bg-white rounded-2xl w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col">
-        {/* Modal header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-          <div>
-            <h2 className="text-lg font-medium">{item.name}</h2>
-            <p className="text-sm text-gray-500 font-mono">{item.category}</p>
-            {item.tags && item.tags.length > 0 && (
-              <div className="flex flex-wrap gap-1 mt-1">
-                {item.tags.map((tag, index) => (
-                  <span key={index} className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded">
-                    {tag}
-                  </span>
-                ))}
-              </div>
-            )}
-            {item.metadata?.description && (
-              <p className="text-xs text-gray-400 mt-1 max-w-md">{item.metadata.description}</p>
-            )}
+    <div className="min-h-screen bg-[#f8f8f8] font-sans">
+      <header className="sticky top-0 z-50 bg-[#f8f8f8] border-b border-[#e5e5e5]">
+        <div className="px-4 pt-3 pb-2.5">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-medium tracking-wide">katalog</span>
+            <span className="text-[11px] text-[#888]">{filteredItems.length} of {items.length} objects</span>
           </div>
-          <button
-            onClick={onClose}
-            className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-gray-100 transition-colors text-xl"
-          >
-            ×
-          </button>
+          <div className="flex items-center gap-1.5 text-[11px] flex-wrap">
+            <span className="text-[#888] mr-0.5">Filter:</span>
+            {categories.map((cat, i) => (
+              <React.Fragment key={cat}>
+                <button
+                  onClick={() => setSelectedCategory(cat)}
+                  className={`bg-transparent border-none cursor-pointer underline underline-offset-2 px-1 py-0.5 font-sans text-[11px] ${selectedCategory === cat ? 'font-medium' : 'font-normal'}`}
+                >
+                  {cat === 'all' ? 'All' : cat}
+                </button>
+                {i < categories.length - 1 && <span className="text-[#ccc]">|</span>}
+              </React.Fragment>
+            ))}
+            <button
+              onClick={() => setGridSize(sizes[(sizes.indexOf(gridSize) + 1) % sizes.length])}
+              className="ml-auto bg-transparent border-none cursor-pointer underline underline-offset-2 px-1.5 py-0.5 font-sans text-[11px]"
+            >
+              Change size
+            </button>
+          </div>
         </div>
+        <div className="px-4 pb-2.5">
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            placeholder="Search objects..."
+            className="w-full py-2 px-3 text-xs border border-[#e5e5e5] rounded-lg bg-white outline-none font-sans focus:border-[#888]"
+          />
+        </div>
+      </header>
 
-        {/* 3D Viewer */}
-        <div className="flex-1 relative min-h-[400px]">
-          <div ref={containerRef} className="absolute inset-0" />
-          
-          {loading && (
-            <div className="absolute inset-0 flex items-center justify-center bg-[#f5f5f5]">
-              <div className="w-8 h-8 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
-            </div>
-          )}
-          
-          {/* Light control hint */}
-          {!loading && (
-            <div className="absolute bottom-4 left-4 text-xs text-gray-400 font-mono pointer-events-none">
-              Shift + drag to adjust lighting
-            </div>
-          )}
-        </div>
+      <div className="flex gap-1.5 px-4 py-2.5 overflow-x-auto" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+        {tags.map(tag => (
+          <button
+            key={tag}
+            onClick={() => setSearchQuery(tag === 'all' ? '' : tag)}
+            className={`flex items-center gap-1 px-2.5 py-1 text-[10px] rounded-2xl border whitespace-nowrap cursor-pointer font-sans flex-shrink-0 transition-colors ${
+              (searchQuery === tag || (tag === 'all' && !searchQuery))
+                ? 'bg-[#1a1a1a] text-white border-[#1a1a1a]'
+                : 'bg-white text-[#1a1a1a] border-[#e5e5e5] hover:bg-[#f0f0f0]'
+            }`}
+          >
+            {tag === 'all' ? 'Show All' : tag}
+          </button>
+        ))}
       </div>
+
+      <div className="px-3 pb-6">
+        {filteredItems.length === 0 ? (
+          <div className="text-center py-12 text-[#888]">
+            <p className="font-medium mb-1">No objects found</p>
+            <p className="text-xs">Try adjusting your filters</p>
+          </div>
+        ) : (
+          <div className={`grid ${gridClasses[gridSize]}`}>
+            {filteredItems.map((item, index) => (
+              <ModelCard key={item.id} item={item} onClick={() => setSelectedItem(item)} gridSize={gridSize} index={index} />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {selectedItem && (
+        <div
+          onClick={() => setSelectedItem(null)}
+          className="fixed inset-0 bg-black/85 z-[100] flex items-center justify-center p-4"
+        >
+          <div onClick={e => e.stopPropagation()} className="bg-white rounded-xl w-full max-w-[480px] max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="aspect-square bg-[#efefef] relative flex items-center justify-center">
+              <button 
+                onClick={() => setSelectedItem(null)} 
+                className="absolute top-2.5 right-2.5 w-8 h-8 rounded-full bg-white/90 border-none cursor-pointer text-lg flex items-center justify-center hover:scale-110 transition-transform"
+              >
+                ×
+              </button>
+              <div className="text-[#888] text-center">
+                <svg width="48" height="48" fill="none" viewBox="0 0 24 24" stroke="currentColor" className="mx-auto mb-2 opacity-50">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                </svg>
+                <span className="text-xs">3D Model</span>
+                <p className="text-[10px] mt-2 opacity-60">Open HTML version for interactive 3D</p>
+              </div>
+              <span className="absolute bottom-2.5 left-1/2 -translate-x-1/2 text-[9px] text-black/35">Drag to rotate • Pinch to zoom</span>
+            </div>
+            <div className="p-4 overflow-y-auto">
+              <h2 className="text-base font-medium mb-1">{selectedItem.name}</h2>
+              <p className="text-[11px] text-[#888] mb-3">{selectedItem.category}</p>
+              <div className="text-[11px] text-[#888] mb-3">
+                <span className="mr-4">Size: {selectedItem.size}</span>
+                <span>Uploaded: {selectedItem.uploadedAt}</span>
+              </div>
+              {selectedItem.tags?.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {selectedItem.tags.map(tag => (
+                    <span key={tag} className="px-2 py-0.5 bg-[#f0f0f0] rounded-[10px] text-[9px]">{tag}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
