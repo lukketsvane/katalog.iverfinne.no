@@ -30,6 +30,22 @@ const CATEGORIES = [
   { value: 'misc', label: 'Misc' },
 ];
 
+// Models that should not open in the overlay window
+const IGNORED_MODELS = ['Sculpt5', 'Sculpt9'];
+const IGNORED_CATEGORY = 'models';
+
+// Viewer configuration constants
+const MODEL_SCALE_FACTOR = 2.5;
+const CAMERA_DISTANCE_MULTIPLIER = 1.2;
+const CAMERA_HEIGHT_MULTIPLIER = 0.7;
+
+function shouldIgnoreItem(item: CatalogItem): boolean {
+  return (
+    item.category.toLowerCase() === IGNORED_CATEGORY &&
+    IGNORED_MODELS.some(name => item.name.toLowerCase() === name.toLowerCase())
+  );
+}
+
 export default function Katalog() {
   const [items, setItems] = useState<CatalogItem[]>([]);
   const [filteredItems, setFilteredItems] = useState<CatalogItem[]>([]);
@@ -199,7 +215,7 @@ export default function Katalog() {
                 key={item.url}
                 item={item}
                 size={gridSize}
-                onClick={() => setSelectedItem(item)}
+                onClick={shouldIgnoreItem(item) ? undefined : () => setSelectedItem(item)}
                 index={index}
               />
             ))}
@@ -227,7 +243,7 @@ function CatalogCard({
 }: { 
   item: CatalogItem; 
   size: 'small' | 'medium' | 'large';
-  onClick: () => void;
+  onClick?: () => void;
   index: number;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -306,11 +322,12 @@ function CatalogCard({
   }, [item.url]);
 
   const aspectClass = size === 'small' ? 'aspect-square' : 'aspect-[4/3]';
+  const isClickable = !!onClick;
 
   return (
     <div
       onClick={onClick}
-      className="group cursor-pointer"
+      className={`group ${isClickable ? 'cursor-pointer' : ''}`}
       style={{ animationDelay: `${index * 30}ms` }}
     >
       <div className={`${aspectClass} bg-[#e8e8e8] rounded-lg overflow-hidden relative`}>
@@ -369,6 +386,9 @@ function ItemModal({ item, onClose }: { item: CatalogItem; onClose: () => void }
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
+    // Disable pan and zoom - only allow orbit
+    controls.enablePan = false;
+    controls.enableZoom = false;
 
     scene.add(new THREE.AmbientLight(0xffffff, 0.6));
     const keyLight = new THREE.DirectionalLight(0xffffff, 1);
@@ -378,10 +398,7 @@ function ItemModal({ item, onClose }: { item: CatalogItem; onClose: () => void }
     fillLight.position.set(-5, 0, -5);
     scene.add(fillLight);
 
-    // Grid
-    const grid = new THREE.GridHelper(6, 30, 0xcccccc, 0xe0e0e0);
-    grid.position.y = -1;
-    scene.add(grid);
+    // Grid removed as per requirements
 
     const loader = new GLTFLoader();
     loader.load(item.url, (gltf) => {
@@ -392,7 +409,16 @@ function ItemModal({ item, onClose }: { item: CatalogItem; onClose: () => void }
 
       model.position.sub(center);
       const maxDim = Math.max(size.x, size.y, size.z);
-      model.scale.setScalar(2 / maxDim);
+      // Scale to fit the frame better
+      model.scale.setScalar(MODEL_SCALE_FACTOR / maxDim);
+
+      // Position camera to fit model in frame
+      const fov = camera.fov * (Math.PI / 180);
+      const cameraDistance = (maxDim / 2) / Math.tan(fov / 2) * CAMERA_DISTANCE_MULTIPLIER;
+      camera.position.set(cameraDistance, cameraDistance * CAMERA_HEIGHT_MULTIPLIER, cameraDistance);
+      camera.lookAt(0, 0, 0);
+      controls.target.set(0, 0, 0);
+      controls.update();
 
       scene.add(model);
       setLoading(false);
@@ -460,28 +486,6 @@ function ItemModal({ item, onClose }: { item: CatalogItem; onClose: () => void }
               <div className="w-8 h-8 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
             </div>
           )}
-        </div>
-
-        {/* Modal footer */}
-        <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between">
-          <div className="text-xs text-gray-400 font-mono">
-            Drag to rotate • Scroll to zoom
-          </div>
-          <div className="flex gap-2">
-            <button
-              onClick={() => navigator.clipboard.writeText(item.url)}
-              className="px-4 py-2 bg-gray-100 rounded-lg text-sm hover:bg-gray-200 transition-colors"
-            >
-              Copy URL
-            </button>
-            <a
-              href={item.url}
-              download
-              className="px-4 py-2 bg-black text-white rounded-lg text-sm hover:bg-gray-800 transition-colors"
-            >
-              Download GLB
-            </a>
-          </div>
         </div>
       </div>
     </div>
