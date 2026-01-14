@@ -80,6 +80,13 @@ export default function UploadPortal() {
   const [transformMode, setTransformMode] = useState<'translate' | 'rotate'>('rotate');
   const [catalogItems, setCatalogItems] = useState<CatalogItem[]>([]);
   const [editingItem, setEditingItem] = useState<CatalogItem | null>(null);
+  
+  // Viewer controls state
+  const [light1On, setLight1On] = useState(true);
+  const [light2On, setLight2On] = useState(true);
+  const [light3On, setLight3On] = useState(true);
+  const [gridVisible, setGridVisible] = useState(true);
+  const [darkMode, setDarkMode] = useState(true);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -89,6 +96,12 @@ export default function UploadPortal() {
   const orbitControlsRef = useRef<OrbitControls | null>(null);
   const transformControlsRef = useRef<TransformControls | null>(null);
   const originalBBoxRef = useRef<THREE.Box3 | null>(null);
+  
+  // Light and grid refs
+  const keyLightRef = useRef<THREE.DirectionalLight | null>(null);
+  const fillLightRef = useRef<THREE.DirectionalLight | null>(null);
+  const rimLightRef = useRef<THREE.DirectionalLight | null>(null);
+  const gridRef = useRef<THREE.GridHelper | null>(null);
 
   const extractMaterials = useCallback((model: THREE.Group) => {
     const mats: MaterialInfo[] = [];
@@ -165,7 +178,7 @@ export default function UploadPortal() {
     const height = containerRef.current.clientHeight;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x1a1a1a);
+    scene.background = new THREE.Color(0x000000);
     sceneRef.current = scene;
 
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.001, 1000);
@@ -187,17 +200,25 @@ export default function UploadPortal() {
     orbitControls.enableDamping = true;
     orbitControlsRef.current = orbitControls;
 
-    // Two physical lights for realistic shading (no env map)
+    // Three physical lights for realistic shading (no env map)
     const keyLight = new THREE.DirectionalLight(0xffffff, 2.5);
     keyLight.position.set(5, 8, 5);
     keyLight.castShadow = true;
     keyLight.shadow.mapSize.width = 1024;
     keyLight.shadow.mapSize.height = 1024;
     scene.add(keyLight);
+    keyLightRef.current = keyLight;
 
     const fillLight = new THREE.DirectionalLight(0xfff5e6, 1.0);
     fillLight.position.set(-4, 3, -3);
     scene.add(fillLight);
+    fillLightRef.current = fillLight;
+
+    // Third light - rim/back light for more realistic shading
+    const rimLight = new THREE.DirectionalLight(0xe6f0ff, 1.5);
+    rimLight.position.set(0, 5, -5);
+    scene.add(rimLight);
+    rimLightRef.current = rimLight;
 
     // Ground plane for shadows
     const groundGeometry = new THREE.PlaneGeometry(20, 20);
@@ -211,6 +232,7 @@ export default function UploadPortal() {
     // Grid helper
     const gridHelper = new THREE.GridHelper(4, 20, 0x333333, 0x222222);
     scene.add(gridHelper);
+    gridRef.current = gridHelper;
 
     const loader = new GLTFLoader();
     const blob = new Blob([arrayBuffer]);
@@ -306,6 +328,57 @@ export default function UploadPortal() {
       transformControlsRef.current.setMode(transformMode);
     }
   }, [transformMode]);
+
+  // Update light 1 (key light) visibility
+  useEffect(() => {
+    if (keyLightRef.current) {
+      keyLightRef.current.visible = light1On;
+    }
+  }, [light1On]);
+
+  // Update light 2 (fill light) visibility
+  useEffect(() => {
+    if (fillLightRef.current) {
+      fillLightRef.current.visible = light2On;
+    }
+  }, [light2On]);
+
+  // Update light 3 (rim light) visibility
+  useEffect(() => {
+    if (rimLightRef.current) {
+      rimLightRef.current.visible = light3On;
+    }
+  }, [light3On]);
+
+  // Update grid visibility
+  useEffect(() => {
+    if (gridRef.current) {
+      gridRef.current.visible = gridVisible;
+    }
+  }, [gridVisible]);
+
+  // Update background color (dark/light mode)
+  useEffect(() => {
+    if (sceneRef.current) {
+      sceneRef.current.background = new THREE.Color(darkMode ? 0x000000 : 0xffffff);
+    }
+    if (gridRef.current) {
+      // Update grid colors based on mode
+      gridRef.current.dispose();
+      if (sceneRef.current) {
+        sceneRef.current.remove(gridRef.current);
+        const newGrid = new THREE.GridHelper(
+          4, 
+          20, 
+          darkMode ? 0x333333 : 0xcccccc, 
+          darkMode ? 0x222222 : 0xdddddd
+        );
+        newGrid.visible = gridVisible;
+        sceneRef.current.add(newGrid);
+        gridRef.current = newGrid;
+      }
+    }
+  }, [darkMode, gridVisible]);
 
   const handleFile = useCallback((f: File) => {
     setFile(f);
@@ -607,6 +680,87 @@ export default function UploadPortal() {
                     }`}
                   >
                     Move
+                  </button>
+                </div>
+                {/* Viewer controls - bottom right */}
+                <div className="absolute bottom-3 right-3 flex gap-1.5">
+                  {/* Light 1 toggle */}
+                  <button
+                    onClick={() => setLight1On(!light1On)}
+                    className={`p-2 rounded transition ${
+                      light1On 
+                        ? 'bg-yellow-500/80 text-black' 
+                        : 'bg-neutral-800/80 text-neutral-400 hover:bg-neutral-700'
+                    }`}
+                    title="Toggle Key Light"
+                  >
+                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7zm2.85 11.1l-.85.6V16h-4v-2.3l-.85-.6A4.997 4.997 0 017 9c0-2.76 2.24-5 5-5s5 2.24 5 5c0 1.63-.8 3.16-2.15 4.1z"/>
+                    </svg>
+                  </button>
+                  {/* Light 2 toggle */}
+                  <button
+                    onClick={() => setLight2On(!light2On)}
+                    className={`p-2 rounded transition ${
+                      light2On 
+                        ? 'bg-yellow-500/80 text-black' 
+                        : 'bg-neutral-800/80 text-neutral-400 hover:bg-neutral-700'
+                    }`}
+                    title="Toggle Fill Light"
+                  >
+                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7zm2.85 11.1l-.85.6V16h-4v-2.3l-.85-.6A4.997 4.997 0 017 9c0-2.76 2.24-5 5-5s5 2.24 5 5c0 1.63-.8 3.16-2.15 4.1z"/>
+                    </svg>
+                  </button>
+                  {/* Light 3 toggle */}
+                  <button
+                    onClick={() => setLight3On(!light3On)}
+                    className={`p-2 rounded transition ${
+                      light3On 
+                        ? 'bg-yellow-500/80 text-black' 
+                        : 'bg-neutral-800/80 text-neutral-400 hover:bg-neutral-700'
+                    }`}
+                    title="Toggle Rim Light"
+                  >
+                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7zm2.85 11.1l-.85.6V16h-4v-2.3l-.85-.6A4.997 4.997 0 017 9c0-2.76 2.24-5 5-5s5 2.24 5 5c0 1.63-.8 3.16-2.15 4.1z"/>
+                    </svg>
+                  </button>
+                  {/* Divider */}
+                  <div className="w-px bg-neutral-600 mx-1" />
+                  {/* Grid toggle */}
+                  <button
+                    onClick={() => setGridVisible(!gridVisible)}
+                    className={`p-2 rounded transition ${
+                      gridVisible 
+                        ? 'bg-blue-500/80 text-white' 
+                        : 'bg-neutral-800/80 text-neutral-400 hover:bg-neutral-700'
+                    }`}
+                    title="Toggle Grid"
+                  >
+                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M3 3h18v18H3zM3 9h18M3 15h18M9 3v18M15 3v18"/>
+                    </svg>
+                  </button>
+                  {/* Dark/Light mode toggle */}
+                  <button
+                    onClick={() => setDarkMode(!darkMode)}
+                    className={`p-2 rounded transition ${
+                      darkMode 
+                        ? 'bg-neutral-800/80 text-white hover:bg-neutral-700' 
+                        : 'bg-white/80 text-black hover:bg-neutral-200'
+                    }`}
+                    title={darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+                  >
+                    {darkMode ? (
+                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M12 3a9 9 0 109 9c0-.46-.04-.92-.1-1.36a5.389 5.389 0 01-4.4 2.26 5.403 5.403 0 01-3.14-9.8c-.44-.06-.9-.1-1.36-.1z"/>
+                      </svg>
+                    ) : (
+                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zM2 13h2c.55 0 1-.45 1-1s-.45-1-1-1H2c-.55 0-1 .45-1 1s.45 1 1 1zm18 0h2c.55 0 1-.45 1-1s-.45-1-1-1h-2c-.55 0-1 .45-1 1s.45 1 1 1zM11 2v2c0 .55.45 1 1 1s1-.45 1-1V2c0-.55-.45-1-1-1s-1 .45-1 1zm0 18v2c0 .55.45 1 1 1s1-.45 1-1v-2c0-.55-.45-1-1-1s-1 .45-1 1zM5.99 4.58a.996.996 0 00-1.41 0 .996.996 0 000 1.41l1.06 1.06c.39.39 1.03.39 1.41 0s.39-1.03 0-1.41L5.99 4.58zm12.37 12.37a.996.996 0 00-1.41 0 .996.996 0 000 1.41l1.06 1.06c.39.39 1.03.39 1.41 0a.996.996 0 000-1.41l-1.06-1.06zm1.06-10.96a.996.996 0 000-1.41.996.996 0 00-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06zM7.05 18.36a.996.996 0 000-1.41.996.996 0 00-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06z"/>
+                      </svg>
+                    )}
                   </button>
                 </div>
                 {/* Camera capture button */}

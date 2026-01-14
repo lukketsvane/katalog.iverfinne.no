@@ -1,4 +1,4 @@
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import { NextResponse } from 'next/server';
 
 // Extend timeout to 60 seconds for Vercel Hobby plan
@@ -55,8 +55,15 @@ Respond ONLY with valid JSON in this exact format, no markdown:
   "description": "Brief one-sentence description"
 }`;
 
+    const config = {
+      thinkingConfig: {
+        thinkingLevel: ThinkingLevel.HIGH,
+      },
+    };
+
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-preview-05-20',
+      model: 'gemini-3-flash-preview',
+      config,
       contents: [
         {
           role: 'user',
