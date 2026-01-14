@@ -12,6 +12,7 @@ interface CatalogItem {
   category: string;
   size?: number;
   uploadedAt?: string;
+  thumbnail?: string;
 }
 
 const CATEGORIES = [
@@ -35,9 +36,6 @@ const IGNORED_MODELS = ['Sculpt5', 'Sculpt9'];
 const IGNORED_CATEGORY = 'models';
 
 // Viewer configuration constants
-const MODEL_SCALE_FACTOR = 3.0;
-const CAMERA_DISTANCE_MULTIPLIER = 0.9;
-const CAMERA_HEIGHT_MULTIPLIER = 0.5;
 const ZOOM_MIN_DISTANCE = 1;
 const ZOOM_MAX_DISTANCE = 10;
 
@@ -258,13 +256,19 @@ function CatalogCard({
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
+    // Enable realistic/PBR rendering for thumbnails
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.0;
     container.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-    const light = new THREE.DirectionalLight(0xffffff, 1);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+    const light = new THREE.DirectionalLight(0xffffff, 1.2);
     light.position.set(5, 5, 5);
     scene.add(light);
+    // Add hemisphere light for better ambient
+    const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.4);
+    scene.add(hemiLight);
 
     const loader = new GLTFLoader();
     loader.load(
@@ -275,9 +279,33 @@ function CatalogCard({
         const center = box.getCenter(new THREE.Vector3());
         const boxSize = box.getSize(new THREE.Vector3());
 
+        // Center the model at origin
         model.position.sub(center);
+        
+        // Calculate optimal scale to fill frame
         const maxDim = Math.max(boxSize.x, boxSize.y, boxSize.z);
-        model.scale.setScalar(1.5 / maxDim);
+        const targetSize = 1.8; // Slightly larger to fill frame better
+        model.scale.setScalar(targetSize / maxDim);
+
+        // Calculate optimal camera distance after scaling
+        const scaledBox = new THREE.Box3().setFromObject(model);
+        const scaledSize = scaledBox.getSize(new THREE.Vector3());
+        const scaledMaxDim = Math.max(scaledSize.x, scaledSize.y, scaledSize.z);
+        
+        const fov = camera.fov * (Math.PI / 180);
+        const aspectRatio = width / height;
+        const fitHeightDistance = (scaledMaxDim / 2) / Math.tan(fov / 2);
+        const fitWidthDistance = (scaledMaxDim / 2) / Math.tan(fov / 2) / aspectRatio;
+        const cameraDistance = Math.max(fitHeightDistance, fitWidthDistance) * 1.3;
+
+        // Position camera at a nice angle
+        const cameraAngle = Math.PI / 7; // ~25 degrees elevation
+        camera.position.set(
+          cameraDistance * Math.cos(cameraAngle) * Math.cos(Math.PI / 4),
+          cameraDistance * Math.sin(cameraAngle),
+          cameraDistance * Math.cos(cameraAngle) * Math.sin(Math.PI / 4)
+        );
+        camera.lookAt(0, 0, 0);
 
         scene.add(model);
         setLoaded(true);
@@ -369,6 +397,9 @@ function ItemModal({ item, onClose }: { item: CatalogItem; onClose: () => void }
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
+    // Enable realistic/PBR rendering
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.0;
     container.appendChild(renderer.domElement);
 
     const controls = new OrbitControls(camera, renderer.domElement);
@@ -380,15 +411,70 @@ function ItemModal({ item, onClose }: { item: CatalogItem; onClose: () => void }
     controls.minDistance = ZOOM_MIN_DISTANCE;
     controls.maxDistance = ZOOM_MAX_DISTANCE;
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-    const keyLight = new THREE.DirectionalLight(0xffffff, 1);
+    // Lighting setup for realistic rendering
+    scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+    const keyLight = new THREE.DirectionalLight(0xffffff, 1.5);
     keyLight.position.set(5, 5, 5);
     scene.add(keyLight);
-    const fillLight = new THREE.DirectionalLight(0xffffff, 0.3);
+    const fillLight = new THREE.DirectionalLight(0xffffff, 0.5);
     fillLight.position.set(-5, 0, -5);
     scene.add(fillLight);
+    // Add hemisphere light for better ambient
+    const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.5);
+    scene.add(hemiLight);
 
-    // Grid removed as per requirements
+    // Track state for light control
+    let isDraggingLight = false;
+    let lastMouseX = 0;
+    let lastMouseY = 0;
+
+    const handleKeyDownLocal = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+
+    const handleMouseDown = (e: MouseEvent) => {
+      if (e.shiftKey) {
+        isDraggingLight = true;
+        lastMouseX = e.clientX;
+        lastMouseY = e.clientY;
+        controls.enabled = false; // Disable camera controls while adjusting light
+        e.preventDefault();
+      }
+    };
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (isDraggingLight && e.shiftKey) {
+        const deltaX = e.clientX - lastMouseX;
+        const deltaY = e.clientY - lastMouseY;
+        lastMouseX = e.clientX;
+        lastMouseY = e.clientY;
+
+        // Rotate light position based on mouse movement
+        const spherical = new THREE.Spherical();
+        spherical.setFromVector3(keyLight.position);
+        spherical.theta -= deltaX * 0.01;
+        spherical.phi -= deltaY * 0.01;
+        // Clamp phi to prevent flipping
+        spherical.phi = Math.max(0.1, Math.min(Math.PI - 0.1, spherical.phi));
+        keyLight.position.setFromSpherical(spherical);
+      } else if (isDraggingLight && !e.shiftKey) {
+        // User released shift while dragging, stop light adjustment
+        isDraggingLight = false;
+        controls.enabled = true;
+      }
+    };
+
+    const handleMouseUp = () => {
+      if (isDraggingLight) {
+        isDraggingLight = false;
+        controls.enabled = true; // Re-enable camera controls
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDownLocal);
+    container.addEventListener('mousedown', handleMouseDown);
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
 
     const loader = new GLTFLoader();
     loader.load(item.url, (gltf) => {
@@ -397,17 +483,45 @@ function ItemModal({ item, onClose }: { item: CatalogItem; onClose: () => void }
       const center = box.getCenter(new THREE.Vector3());
       const size = box.getSize(new THREE.Vector3());
 
+      // Center the model at origin
       model.position.sub(center);
+      
+      // Calculate the bounding sphere for better framing
       const maxDim = Math.max(size.x, size.y, size.z);
-      // Scale to fit the frame better
-      model.scale.setScalar(MODEL_SCALE_FACTOR / maxDim);
+      
+      // Scale the model to a normalized size
+      const targetSize = 2.0;
+      const scale = targetSize / maxDim;
+      model.scale.setScalar(scale);
 
-      // Position camera to fit model in frame
+      // Recalculate bounding box after scaling
+      const scaledBox = new THREE.Box3().setFromObject(model);
+      const scaledSize = scaledBox.getSize(new THREE.Vector3());
+      const scaledMaxDim = Math.max(scaledSize.x, scaledSize.y, scaledSize.z);
+
+      // Calculate optimal camera distance to frame the model
       const fov = camera.fov * (Math.PI / 180);
-      const cameraDistance = (maxDim / 2) / Math.tan(fov / 2) * CAMERA_DISTANCE_MULTIPLIER;
-      camera.position.set(cameraDistance, cameraDistance * CAMERA_HEIGHT_MULTIPLIER, cameraDistance);
-      camera.lookAt(0, 0, 0);
+      const aspectRatio = width / height;
+      // Use the larger dimension relative to FOV for proper framing
+      const fitHeightDistance = (scaledMaxDim / 2) / Math.tan(fov / 2);
+      const fitWidthDistance = (scaledMaxDim / 2) / Math.tan(fov / 2) / aspectRatio;
+      const cameraDistance = Math.max(fitHeightDistance, fitWidthDistance) * 1.2; // 1.2 for some padding
+
+      // Position camera at a nice angle
+      const cameraAngle = Math.PI / 6; // 30 degrees elevation
+      camera.position.set(
+        cameraDistance * Math.cos(cameraAngle) * Math.cos(Math.PI / 4),
+        cameraDistance * Math.sin(cameraAngle),
+        cameraDistance * Math.cos(cameraAngle) * Math.sin(Math.PI / 4)
+      );
+      
+      // Set controls target to center of geometry (origin after centering)
       controls.target.set(0, 0, 0);
+      camera.lookAt(0, 0, 0);
+      
+      // Update zoom limits based on model size
+      controls.minDistance = cameraDistance * 0.3;
+      controls.maxDistance = cameraDistance * 3;
       controls.update();
 
       scene.add(model);
@@ -432,16 +546,13 @@ function ItemModal({ item, onClose }: { item: CatalogItem; onClose: () => void }
     };
     window.addEventListener('resize', handleResize);
 
-    // Handle escape key
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', handleKeyDown);
-
     return () => {
       cancelAnimationFrame(animationId);
       window.removeEventListener('resize', handleResize);
-      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keydown', handleKeyDownLocal);
+      container.removeEventListener('mousedown', handleMouseDown);
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
       renderer.dispose();
       controls.dispose();
     };
@@ -474,6 +585,13 @@ function ItemModal({ item, onClose }: { item: CatalogItem; onClose: () => void }
           {loading && (
             <div className="absolute inset-0 flex items-center justify-center bg-[#f5f5f5]">
               <div className="w-8 h-8 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
+            </div>
+          )}
+          
+          {/* Light control hint */}
+          {!loading && (
+            <div className="absolute bottom-4 left-4 text-xs text-gray-400 font-mono pointer-events-none">
+              Shift + drag to adjust lighting
             </div>
           )}
         </div>
