@@ -94,8 +94,8 @@ export default function UploadPortal() {
   const [light1On, setLight1On] = useState(true);
   const [light2On, setLight2On] = useState(true);
   const [light3On, setLight3On] = useState(true);
-  const [gridVisible, setGridVisible] = useState(true);
-  const [darkMode, setDarkMode] = useState(true);
+  const [gridVisible, setGridVisible] = useState(false);
+  const [darkMode, setDarkMode] = useState(false);
   
   // Light direction state (azimuth angle in degrees)
   const [light1Angle, setLight1Angle] = useState(45);
@@ -114,6 +114,10 @@ export default function UploadPortal() {
   const [editManualPositionSet, setEditManualPositionSet] = useState(false);
   const editTransformModeRef = useRef<'translate' | 'rotate' | 'scale'>('rotate');
   const editManualPositionSetRef = useRef(false);
+  const editOriginalBBoxRef = useRef<THREE.Box3 | null>(null);
+  const editPreviewScaleRef = useRef<number>(1);
+  const [editTargetHeight, setEditTargetHeight] = useState<number | ''>('');
+  const [editScaleFactor, setEditScaleFactor] = useState<number | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -208,7 +212,7 @@ export default function UploadPortal() {
     const height = containerRef.current.clientHeight;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x000000);
+    scene.background = new THREE.Color(0xffffff);
     sceneRef.current = scene;
 
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.001, 1000);
@@ -260,7 +264,8 @@ export default function UploadPortal() {
     scene.add(ground);
 
     // Grid helper
-    const gridHelper = new THREE.GridHelper(4, 20, 0x333333, 0x222222);
+    const gridHelper = new THREE.GridHelper(4, 20, 0xcccccc, 0xdddddd);
+    gridHelper.visible = false;
     scene.add(gridHelper);
     gridRef.current = gridHelper;
 
@@ -491,7 +496,7 @@ export default function UploadPortal() {
     const height = editContainerRef.current.clientHeight;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x000000);
+    scene.background = new THREE.Color(0xffffff);
     editSceneRef.current = scene;
 
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.001, 1000);
@@ -524,8 +529,9 @@ export default function UploadPortal() {
     rimLight.position.set(0, 5, -5);
     scene.add(rimLight);
 
-    // Grid
-    const gridHelper = new THREE.GridHelper(4, 20, 0x333333, 0x222222);
+    // Grid (hidden by default)
+    const gridHelper = new THREE.GridHelper(4, 20, 0xcccccc, 0xdddddd);
+    gridHelper.visible = false;
     scene.add(gridHelper);
 
     // Load model from URL
@@ -543,6 +549,7 @@ export default function UploadPortal() {
       });
 
       const box = new THREE.Box3().setFromObject(model);
+      editOriginalBBoxRef.current = box.clone();
       const center = box.getCenter(new THREE.Vector3());
       const size = box.getSize(new THREE.Vector3());
 
@@ -551,7 +558,15 @@ export default function UploadPortal() {
 
       const maxDim = Math.max(size.x, size.y, size.z);
       const scale = 2 / maxDim;
+      editPreviewScaleRef.current = scale;
       model.scale.setScalar(scale);
+
+      // Initialize edit target height from metadata if available
+      if (editingItem.metadata?.targetHeight) {
+        setEditTargetHeight(editingItem.metadata.targetHeight);
+      } else {
+        setEditTargetHeight('');
+      }
 
       // Re-snap after scaling
       snapToGround(model);
@@ -611,6 +626,16 @@ export default function UploadPortal() {
     }
     editTransformModeRef.current = editTransformMode;
   }, [editTransformMode]);
+
+  // Calculate edit scale factor when target height changes
+  useEffect(() => {
+    if (editTargetHeight !== '' && editOriginalBBoxRef.current) {
+      const originalHeight = editOriginalBBoxRef.current.max.y - editOriginalBBoxRef.current.min.y;
+      setEditScaleFactor(Number(editTargetHeight) / originalHeight);
+    } else {
+      setEditScaleFactor(null);
+    }
+  }, [editTargetHeight]);
 
   const addTag = (tag: string) => {
     const t = tag.trim().toLowerCase();
@@ -1994,6 +2019,24 @@ export default function UploadPortal() {
                       ))}
                     </select>
                     
+                    {/* Height/Scale input */}
+                    <div className="bg-neutral-800 rounded-lg p-3">
+                      <div className="text-xs text-neutral-400 mb-2">Target Height (uniform scale)</div>
+                      <div className="flex gap-2">
+                        <input
+                          type="number"
+                          value={editTargetHeight}
+                          onChange={(e) => setEditTargetHeight(e.target.value === '' ? '' : Number(e.target.value))}
+                          placeholder="Height"
+                          className="flex-1 px-3 py-2 bg-black border border-neutral-700 rounded text-sm focus:outline-none focus:border-neutral-500"
+                        />
+                        <span className="px-3 py-2 bg-neutral-700 rounded text-xs text-neutral-400">mm</span>
+                      </div>
+                      {editScaleFactor && (
+                        <div className="mt-2 text-xs text-amber-400 font-mono">{editScaleFactor.toFixed(4)}x scale</div>
+                      )}
+                    </div>
+                    
                     <div className="bg-neutral-800 rounded-lg p-3">
                       <div className="text-xs text-neutral-400 mb-2">Tags</div>
                       <div className="flex flex-wrap gap-1.5">
@@ -2026,7 +2069,17 @@ export default function UploadPortal() {
                     
                     <div className="flex gap-2 mt-4">
                       <button
-                        onClick={() => updateItem(editingItem)}
+                        onClick={() => {
+                          const updatedItem = {
+                            ...editingItem,
+                            metadata: {
+                              ...editingItem.metadata,
+                              targetHeight: editTargetHeight === '' ? null : editTargetHeight,
+                              scaleFactor: editScaleFactor,
+                            }
+                          };
+                          updateItem(updatedItem);
+                        }}
                         className="flex-1 py-2 bg-white text-black rounded text-sm hover:bg-neutral-200 transition"
                       >
                         Save
