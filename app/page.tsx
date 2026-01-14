@@ -196,6 +196,46 @@ export default function UploadPortal() {
     model.position.y -= minY;
   }, []);
 
+  // Setup click handler to hide/show gizmo based on click target
+  const setupGizmoClickHandler = useCallback((
+    renderer: THREE.WebGLRenderer,
+    camera: THREE.PerspectiveCamera,
+    model: THREE.Group,
+    transformControls: TransformControls
+  ) => {
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+    
+    const handleCanvasClick = (event: MouseEvent) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      
+      raycaster.setFromCamera(mouse, camera);
+      
+      // Get all meshes from the model
+      const meshes: THREE.Object3D[] = [];
+      model.traverse((node) => {
+        if ((node as THREE.Mesh).isMesh) {
+          meshes.push(node);
+        }
+      });
+      
+      const intersects = raycaster.intersectObjects(meshes, true);
+      
+      if (intersects.length > 0) {
+        // Clicked on the model - show gizmo
+        transformControls.visible = true;
+      } else {
+        // Clicked on empty space - hide gizmo
+        transformControls.visible = false;
+      }
+    };
+    
+    renderer.domElement.addEventListener('click', handleCanvasClick);
+    return handleCanvasClick;
+  }, []);
+
   const initPreview = useCallback((arrayBuffer: ArrayBuffer) => {
     if (!containerRef.current) return;
 
@@ -325,37 +365,8 @@ export default function UploadPortal() {
         }
       });
 
-      // Click handler to hide/show gizmo based on click target
-      const raycaster = new THREE.Raycaster();
-      const mouse = new THREE.Vector2();
-      
-      const handleCanvasClick = (event: MouseEvent) => {
-        const rect = renderer.domElement.getBoundingClientRect();
-        mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-        mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-        
-        raycaster.setFromCamera(mouse, camera);
-        
-        // Get all meshes from the model
-        const meshes: THREE.Object3D[] = [];
-        model.traverse((node) => {
-          if ((node as THREE.Mesh).isMesh) {
-            meshes.push(node);
-          }
-        });
-        
-        const intersects = raycaster.intersectObjects(meshes, true);
-        
-        if (intersects.length > 0) {
-          // Clicked on the model - show gizmo
-          transformControls.visible = true;
-        } else {
-          // Clicked on empty space - hide gizmo
-          transformControls.visible = false;
-        }
-      };
-      
-      renderer.domElement.addEventListener('click', handleCanvasClick);
+      // Setup click handler to hide/show gizmo
+      setupGizmoClickHandler(renderer, camera, model, transformControls);
 
       let triangles = 0;
       const matSet = new Set<string>();
@@ -393,7 +404,7 @@ export default function UploadPortal() {
       renderer.render(scene, camera);
     };
     animate();
-  }, [extractMaterials, snapToGround]);
+  }, [extractMaterials, snapToGround, setupGizmoClickHandler]);
 
   // Update transform mode
   useEffect(() => {
@@ -625,37 +636,8 @@ export default function UploadPortal() {
         }
       });
 
-      // Click handler to hide/show gizmo based on click target
-      const raycaster = new THREE.Raycaster();
-      const mouse = new THREE.Vector2();
-      
-      const handleCanvasClick = (event: MouseEvent) => {
-        const rect = renderer.domElement.getBoundingClientRect();
-        mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-        mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-        
-        raycaster.setFromCamera(mouse, camera);
-        
-        // Get all meshes from the model
-        const meshes: THREE.Object3D[] = [];
-        model.traverse((node) => {
-          if ((node as THREE.Mesh).isMesh) {
-            meshes.push(node);
-          }
-        });
-        
-        const intersects = raycaster.intersectObjects(meshes, true);
-        
-        if (intersects.length > 0) {
-          // Clicked on the model - show gizmo
-          transformControls.visible = true;
-        } else {
-          // Clicked on empty space - hide gizmo
-          transformControls.visible = false;
-        }
-      };
-      
-      renderer.domElement.addEventListener('click', handleCanvasClick);
+      // Setup click handler to hide/show gizmo
+      setupGizmoClickHandler(renderer, camera, model, transformControls);
     });
 
     let animationId: number;
@@ -681,7 +663,7 @@ export default function UploadPortal() {
       editOrbitControlsRef.current = null;
       editTransformControlsRef.current = null;
     };
-  }, [editingItem?.id, snapToGround]);
+  }, [editingItem?.id, snapToGround, setupGizmoClickHandler]);
 
   // Update edit transform mode
   useEffect(() => {
